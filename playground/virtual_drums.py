@@ -22,6 +22,8 @@ class VirtualDrums:
         self.cap = None
         self.kit = None
         self.prev_positions: Dict[int, Tuple[int, int, float]] = {}
+        self.active_camera_index = None
+        self.available_cameras = []  # Store list of working cameras
 
     def _check_camera_permissions(self) -> None:
         """Check camera permissions on macOS."""
@@ -58,6 +60,10 @@ class VirtualDrums:
         # Try config index first, then fallback
         camera_indices = [CONFIG['camera_index'], 0, 1]
 
+        # First, discover all available cameras
+        if not self.available_cameras:
+            self._discover_available_cameras()
+
         for retry in range(max_retries):
             for cam_idx in camera_indices:
                 try:
@@ -90,7 +96,12 @@ class VirtualDrums:
                     h, w = frame.shape[:2]
                     self.kit = DrumKit((w, h))
                     logger.info(
-                        f"Camera {cam_idx} initialized successfully with resolution {w}x{h}")
+                        f"✓ SUCCESS: Using Camera {cam_idx} with resolution {w}x{h}")
+                    logger.info(f"Available cameras: {self.available_cameras}")
+                    logger.info("Press 'c' to switch camera, 'q' to quit")
+
+                    # Store the camera index being used for reference
+                    self.active_camera_index = cam_idx
                     return
 
                 except Exception as e:
@@ -149,19 +160,106 @@ class VirtualDrums:
                     frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
         self.kit.draw(frame)
+
+        # Add camera info overlay
+        if self.active_camera_index is not None:
+            cv2.putText(frame, f"Camera: {self.active_camera_index}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame, "Press 'c' to switch camera, 'q' to quit", (10, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
         cv2.imshow('Virtual Drums', frame)
 
-        # Check for exit key
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        # Check for keys
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             logger.info("Exit requested by user.")
             raise SystemExit
+        elif key == ord('c'):
+            logger.info("Camera switch requested by user.")
+            self._switch_camera()
 
     def _reinit_camera(self) -> None:
         """Reinitialize camera if it fails during runtime."""
         logger.info("Attempting to reinitialize camera...")
+        old_camera = self.active_camera_index
         if self.cap:
             self.cap.release()
         self._init_camera_with_retry()
+        if self.active_camera_index != old_camera:
+            logger.info(
+                f"Camera switched from {old_camera} to {self.active_camera_index}")
+
+    def _discover_available_cameras(self) -> None:
+        """Discover all available cameras."""
+        logger.info("Discovering available cameras...")
+        self.available_cameras = []
+
+        for i in range(5):  # Check first 5 camera indices
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    self.available_cameras.append(i)
+                    logger.info(f"Found working camera at index {i}")
+            cap.release()
+
+        if not self.available_cameras:
+            logger.warning("No working cameras found!")
+        else:
+            logger.info(f"Total available cameras: {self.available_cameras}")
+
+    def _switch_camera(self) -> None:
+        """Switch to the next available camera."""
+        if len(self.available_cameras) <= 1:
+            logger.info("Only one camera available, cannot switch.")
+            return
+
+        try:
+            current_index = self.available_cameras.index(
+                self.active_camera_index)
+            next_index = (current_index + 1) % len(self.available_cameras)
+            next_camera = self.available_cameras[next_index]
+
+            logger.info(
+                f"Switching from camera {self.active_camera_index} to camera {next_camera}")
+
+            # Release current camera
+            if self.cap:
+                self.cap.release()
+
+            # Initialize new camera
+            self.cap = cv2.VideoCapture(next_camera)
+            if not self.cap.isOpened():
+                logger.error(f"Failed to open camera {next_camera}")
+                # Try to go back to previous camera
+                self._reinit_camera()
+                return
+
+            # Set camera properties
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
+
+            # Test if camera works
+            ret, frame = self.cap.read()
+            if not ret:
+                logger.error(
+                    f"Camera {next_camera} opened but cannot read frames")
+                self._reinit_camera()
+                return
+
+            # Update kit with new resolution if needed
+            h, w = frame.shape[:2]
+            self.kit = DrumKit((w, h))
+
+            self.active_camera_index = next_camera
+            logger.info(f"✓ Successfully switched to camera {next_camera}")
+
+        except (ValueError, Exception) as e:
+            logger.error(f"Error switching camera: {e}")
+            # Try to reinitialize current camera
+            self._reinit_camera()
 
     def cleanup(self) -> None:
         """Release resources."""
