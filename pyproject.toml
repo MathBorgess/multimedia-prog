@@ -1,7 +1,7 @@
 [project]
-name = "multimedia_prog"
-version = "0.1.0"
-description = "Add your description here"
+name = "memory-coordination-game"
+version = "1.0.0"
+description = "Um webapp interativo que combina memória visual e coordenação motora usando visão computacional"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

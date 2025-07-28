@@ -1,7 +1,7 @@
 import asyncio
 import platform
 import logging
-from playground.virtual_drums import VirtualDrums
+from playground.memory_game import MemoryGame
 from config.config import CONFIG
 
 # Configure logging
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Main async function for Pyodide compatibility."""
-    app = VirtualDrums()
+    app = MemoryGame()
     try:
         app.setup()
         while True:
