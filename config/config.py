@@ -8,7 +8,7 @@ CONFIG = {
 
     # Visual settings
     # transparency for areas (0.0 = transparent, 1.0 = opaque)
-    'area_transparency': 0.6,
+    'area_transparency': 0.5,      # Slightly more transparent for better feedback
     'border_thickness': 25,        # border thickness for sequence display
 
     # Sound settings
