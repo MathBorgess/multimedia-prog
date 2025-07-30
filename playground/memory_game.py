@@ -40,7 +40,7 @@ class MemoryGame:
         self.sequence_start_time = 0
         self.last_sequence_sound = 0
         self.last_interaction_time = 0
-        self.interaction_cooldown = 0.5  # seconds
+        self.interaction_cooldown = 0.3  # Reduced for more responsive interaction
 
         # Colors for the game
         self.colors = CONFIG['game_colors']
@@ -55,6 +55,11 @@ class MemoryGame:
 
         # Visual overlay for camera transparency
         self.overlay = None
+
+        # Visual feedback for interactions
+        self.selected_areas = {}  # area_idx: {'start_time': time, 'type': 'correct'/'wrong'}
+        self.hover_areas = {}     # area_idx: time when started hovering
+        self.error_flash_start = 0  # Time when error flash started
 
     def _check_camera_permissions(self) -> None:
         """Check camera permissions on macOS."""
@@ -207,6 +212,11 @@ class MemoryGame:
         self.game_state = "SHOW_SEQUENCE"
         self.sequence_start_time = time.time()
 
+        # Clear visual feedback
+        self.selected_areas.clear()
+        self.hover_areas.clear()
+        self.error_flash_start = 0
+
         # Generate random sequence
         for _ in range(self.sequence_length):
             self.sequence.append(random.randint(0, len(self.colors) - 1))
@@ -252,26 +262,95 @@ class MemoryGame:
             cv2.rectangle(frame, (w-thickness, 0), (w, h), color, -1)  # Right
 
     def _draw_game_areas(self, frame: np.ndarray) -> None:
-        """Draw the 3x3 grid with semi-transparent colors and hand indicators."""
+        """Draw the 3x3 grid with semi-transparent colors, hand indicators, and visual feedback."""
         if not self.game_areas:
             return
+
+        current_time = time.time()
 
         # Create overlay for transparency
         overlay = frame.copy()
 
         for i, (x, y, w, h) in enumerate(self.game_areas):
-            # Draw area with color on overlay
+            # Base color
             color = self.colors[self.area_colors[i]]
+            base_alpha = CONFIG['area_transparency']
+
+            # Check for hover effect
+            if i in self.hover_areas:
+                hover_duration = current_time - self.hover_areas[i]
+                if hover_duration < 0.3:  # Hover effect duration
+                    # Add glow effect for hovering
+                    glow_alpha = 0.3 * (1 - hover_duration / 0.3)  # Fade out
+                    glow_color = tuple(min(255, c + 100)
+                                       for c in color)  # Brighter color
+                    cv2.rectangle(overlay, (x-5, y-5),
+                                  (x + w + 5, y + h + 5), glow_color, -1)
+                    base_alpha = min(0.8, base_alpha + glow_alpha)
+                else:
+                    # Remove expired hover
+                    del self.hover_areas[i]
+
+            # Check for selection feedback
+            if i in self.selected_areas:
+                selection = self.selected_areas[i]
+                selection_duration = current_time - selection['start_time']
+
+                if selection_duration < 0.5:  # Selection effect duration
+                    if selection['type'] == 'correct':
+                        # Green success glow
+                        glow_intensity = 1 - (selection_duration / 0.5)
+                        success_color = (0, 255, 0)  # Green
+                        # Create pulsing effect
+                        pulse = 0.5 + 0.5 * \
+                            abs(np.sin(selection_duration * 10))
+                        glow_color = tuple(
+                            int(c * pulse + success_color[j] * (1-pulse)) for j, c in enumerate(color))
+                        cv2.rectangle(overlay, (x-8, y-8),
+                                      (x + w + 8, y + h + 8), glow_color, -1)
+                        base_alpha = 0.9
+                    else:  # wrong
+                        # Red error flash
+                        flash_intensity = 1 - (selection_duration / 0.5)
+                        error_color = (0, 0, 255)  # Red
+                        # Create flashing effect
+                        flash = 0.5 + 0.5 * \
+                            abs(np.sin(selection_duration * 20))
+                        flash_color = tuple(
+                            int(error_color[j] * flash + c * (1-flash)) for j, c in enumerate(color))
+                        cv2.rectangle(overlay, (x-8, y-8),
+                                      (x + w + 8, y + h + 8), flash_color, -1)
+                        base_alpha = 0.9
+                else:
+                    # Remove expired selection
+                    del self.selected_areas[i]
+
+            # Draw area with color on overlay
             cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
 
         # Blend overlay with original frame for transparency
-        alpha = CONFIG['area_transparency']
-        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        cv2.addWeighted(overlay, base_alpha, frame, 1 - base_alpha, 0, frame)
 
         # Draw borders and hand indicators on top
         for i, (x, y, w, h) in enumerate(self.game_areas):
-            # Draw border
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 255), 3)
+            # Draw border with dynamic thickness based on feedback
+            border_thickness = 3
+            border_color = (255, 255, 255)
+
+            # Enhanced border for active areas
+            if i in self.selected_areas or i in self.hover_areas:
+                border_thickness = 5
+                if i in self.selected_areas:
+                    selection = self.selected_areas[i]
+                    if selection['type'] == 'correct':
+                        border_color = (0, 255, 0)  # Green border for correct
+                    else:
+                        border_color = (0, 0, 255)  # Red border for wrong
+                else:
+                    border_color = (255, 255, 0)  # Yellow border for hover
+
+            cv2.rectangle(frame, (x, y), (x + w, y + h),
+                          border_color, border_thickness)
 
             # Draw hand indicator
             hand_text = "L" if self.area_hands[i] == 0 else "R"
@@ -282,26 +361,103 @@ class MemoryGame:
 
             # Draw text with outline for better visibility
             cv2.putText(frame, hand_text, (text_x, text_y),
-                        # Black outline
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 5)
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 5)  # Black outline
             cv2.putText(frame, hand_text, (text_x, text_y),
-                        # White text
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)  # White text
 
     def _check_area_interaction(self, hand_pos: Tuple[int, int], hand_label: str) -> Optional[int]:
         """Check if hand position is touching any area and return area index."""
         x, y = hand_pos
+        current_time = time.time()
 
         for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
             if (area_x <= x <= area_x + area_w and
                     area_y <= y <= area_y + area_h):
+
+                # Add hover effect for visual feedback
+                if i not in self.hover_areas:
+                    self.hover_areas[i] = current_time
 
                 # Check if correct hand is used
                 expected_hand = "Left" if self.area_hands[i] == 0 else "Right"
                 if hand_label == expected_hand:
                     return i
 
-        return None
+    def _draw_error_notification(self, frame: np.ndarray) -> None:
+        """Draw animated error notification overlay."""
+        if self.error_flash_start <= 0:
+            return
+
+        current_time = time.time()
+        error_duration = current_time - self.error_flash_start
+
+        if error_duration > 1.0:  # Error notification duration
+            self.error_flash_start = 0
+            return
+
+        h, w = frame.shape[:2]
+
+        # Create pulsing red overlay
+        overlay = frame.copy()
+
+        # Calculate flash intensity (fade out over time)
+        intensity = max(0, 1 - error_duration)
+
+        # Create pulsing effect
+        pulse_frequency = 8  # pulses per second
+        pulse = 0.3 + 0.7 * \
+            abs(np.sin(error_duration * pulse_frequency * 2 * np.pi))
+
+        # Red overlay with pulsing intensity
+        red_overlay = np.zeros_like(frame)
+        red_overlay[:, :] = (0, 0, 255)  # Red color
+
+        alpha = intensity * pulse * 0.3  # Max 30% opacity
+        cv2.addWeighted(frame, 1 - alpha, red_overlay, alpha, 0, frame)
+
+        # Draw error text
+        error_text = "WRONG COLOR!"
+        text_size = cv2.getTextSize(
+            error_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 3)[0]
+        text_x = (w - text_size[0]) // 2
+        text_y = h // 2
+
+        # Text with pulsing effect
+        text_alpha = intensity * pulse
+        if text_alpha > 0.3:
+            # Black outline
+            cv2.putText(frame, error_text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 6)
+            # White text
+            cv2.putText(frame, error_text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+
+    def _draw_success_notification(self, frame: np.ndarray, progress: str) -> None:
+        """Draw success notification with progress."""
+        h, w = frame.shape[:2]
+
+        # Draw success message
+        success_text = f"CORRECT! ({progress})"
+        text_size = cv2.getTextSize(
+            success_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+        text_x = (w - text_size[0]) // 2
+        text_y = 100
+
+        # Green background for text
+        bg_padding = 20
+        cv2.rectangle(frame,
+                      (text_x - bg_padding, text_y -
+                       text_size[1] - bg_padding),
+                      (text_x + text_size[0] +
+                       bg_padding, text_y + bg_padding),
+                      (0, 150, 0), -1)
+
+        # Black outline
+        cv2.putText(frame, success_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 4)
+        # White text
+        cv2.putText(frame, success_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
 
     def _process_game_logic(self, current_time: float) -> None:
         """Process the main game logic based on current state."""
@@ -397,13 +553,38 @@ class MemoryGame:
                         actual_color = self.area_colors[area_idx]
 
                         if expected_color == actual_color:
+                            # Correct selection
                             self.current_sequence_index += 1
                             self.last_interaction_time = current_time
+
+                            # Add visual feedback for correct selection
+                            self.selected_areas[area_idx] = {
+                                'start_time': current_time,
+                                'type': 'correct'
+                            }
+
+                            # Play success sound with slight delay for better feedback
+                            self._play_sound('success')
+
                             logger.info(
                                 f"Correct! Progress: {self.current_sequence_index}/{len(self.sequence)}")
                         else:
+                            # Wrong selection
                             self.game_state = "FAILURE"
                             self.last_interaction_time = current_time
+
+                            # Add visual feedback for wrong selection
+                            self.selected_areas[area_idx] = {
+                                'start_time': current_time,
+                                'type': 'wrong'
+                            }
+
+                            # Start error notification
+                            self.error_flash_start = current_time
+
+                            # Play error sound immediately
+                            self._play_sound('error')
+
                             logger.info("Wrong color! Game over.")
 
         # Draw game elements based on state
@@ -420,6 +601,23 @@ class MemoryGame:
 
         elif self.game_state in ["WAIT_INPUT", "SUCCESS", "FAILURE"]:
             self._draw_game_areas(frame)
+
+            # Draw success notification during input if user is making progress
+            if self.game_state == "WAIT_INPUT" and self.current_sequence_index > 0:
+                progress_text = f"{self.current_sequence_index}/{len(self.sequence)}"
+                # Only show for recent correct selections
+                show_success = False
+                for area_idx, selection in self.selected_areas.items():
+                    if (selection['type'] == 'correct' and
+                            current_time - selection['start_time'] < 0.5):
+                        show_success = True
+                        break
+
+                if show_success:
+                    self._draw_success_notification(frame, progress_text)
+
+            # Draw error notification
+            self._draw_error_notification(frame)
 
         # Draw UI
         self._draw_ui(frame)
