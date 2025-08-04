@@ -46,6 +46,8 @@ multimedia-prog/
     └── snare_1.wav       # Som de snare (drums)
 ```
 
+### 🏗️ Decisões Arquiteturais
+
 ### 🔧 Componentes Principais
 
 #### 1. **Módulo Principal (`__main__.py`)**
@@ -97,97 +99,203 @@ multimedia-prog/
 | **NumPy** | ≥1.26.4 | Operações matemáticas e arrays |
 | **Pygame** | ≥2.6.1 | Interface gráfica e áudio |
 
-### 🔍 MediaPipe Hands
 
-**Configuração:**
+### 🔧 Escolha de Ferramentas
+
+#### **MediaPipe**
+
+**Por que MediaPipe?**
+- ✅ **Performance Superior**: Otimizado para tempo real
+- ✅ **Precisão**: 21 landmarks por mão com alta acurácia
+- ✅ **Facilidade de Uso**: API Python simples e bem documentada
+- ✅ **Suporte Multiplataforma**: Funciona em Windows, macOS, Linux
+- ✅ **Otimização Mobile**: Preparado para deploy em dispositivos móveis
+
+
+#### **OpenCV vs Alternativas**
+
+**Por que OpenCV?**
+- ✅ **Maturidade**: Biblioteca consolidada e estável
+- ✅ **Performance**: Otimizada em C++ com bindings Python
+- ✅ **Integração**: Funciona nativamente com MediaPipe
+- ✅ **Funcionalidades**: Amplo conjunto de ferramentas de visão computacional
+- ✅ **Comunidade**: Grande base de usuários e documentação
+
+
+#### **Pygame vs Alternativas**
+
+**Por que Pygame?**
+- ✅ **Simplicidade**: API intuitiva para áudio e gráficos
+- ✅ **Integração**: Funciona bem com OpenCV para display
+- ✅ **Áudio**: Sistema de mixer robusto
+- ✅ **Portabilidade**: Multiplataforma sem configuração adicional
+- ✅ **Leveza**: Não adiciona overhead significativo
+
+## 🚧 Desafios Encontrados e Soluções
+
+### 🎯 Desafio 1: Precisão da Detecção de Mãos
+
+**Problema:**
+- Detecções inconsistentes em diferentes condições de iluminação
+- Falsos positivos em movimentos rápidos
+- Latência na detecção afetando a experiência
+
+**Soluções Implementadas:**
+
+1. **Otimização de Parâmetros MediaPipe:**
 ```python
 'hands_config': {
-    'max_num_hands': 2,                    # Máximo de 2 mãos detectadas
-    'min_detection_confidence': 0.7,       # Confiança mínima para detecção
-    'min_tracking_confidence': 0.7         # Confiança mínima para tracking
+    'max_num_hands': 2,
+    'min_detection_confidence': 0.7,    # Aumentado de 0.5
+    'min_tracking_confidence': 0.7      # Otimizado para estabilidade
 }
 ```
 
-**Landmarks Utilizados:**
-- 21 pontos de referência por mão
-- Coordenadas normalizadas (0.0 - 1.0)
-- Informações de profundidade (z)
-
-## 🎮 Lógica do Jogo
-
-### 🔄 Fluxo de Estados
-
-```mermaid
-graph TD
-    A[INIT] --> B[SHOW_SEQUENCE]
-    B --> C[WAIT_INPUT]
-    C --> D[CHECKING]
-    D --> E{Correto?}
-    E -->|Sim| F[SUCCESS]
-    E -->|Não| G[FAILURE]
-    F --> H{Última cor?}
-    H -->|Sim| I[Nova sequência]
-    H -->|Não| C
-    G --> B
-    I --> B
+2. **Sistema de Cooldown:**
+```python
+def check_interaction_cooldown(self):
+    """Previne múltiplas detecções da mesma interação."""
+    current_time = time.time()
+    if current_time - self.last_interaction_time < self.interaction_cooldown:
+        return False
+    return True
 ```
 
-### 🎯 Sistema de Áreas (Grid 3x3)
-
-O jogo divide a tela em 9 áreas iguais:
-
-```
-┌─────┬─────┬─────┐
-│  0  │  1  │  2  │
-├─────┼─────┼─────┤
-│  3  │  4  │  5  │
-├─────┼─────┼─────┤
-│  6  │  7  │  8  │
-└─────┴─────┴─────┘
+3. **Algoritmo de Centro da Palma Melhorado:**
+```python
+def get_stable_hand_center(self, landmarks, width, height):
+    """Usa múltiplos landmarks para maior estabilidade."""
+    # Landmarks da palma (0, 5, 9, 13, 17) para maior precisão
+    palm_points = [landmarks.landmark[i] for i in [0, 5, 9, 13, 17]]
+    # Média ponderada para reduzir jitter
+    return calculate_weighted_center(palm_points, width, height)
 ```
 
+### 🎯 Desafio 2: Performance em Tempo Real
 
-### 🖐️ Detecção de Interação
+**Problema:**
+- FPS baixo em hardware menos potente
+- Latência entre detecção e resposta
+- Uso intensivo de CPU
 
-**Algoritmo de Detecção:**
-1. Obter posição dos landmarks das mãos
-2. Calcular centro da palma da mão
-3. Verificar se está dentro de uma área do grid
-4. Aplicar cooldown para evitar múltiplas detecções
-5. Validar mão correta (esquerda/direita)
+**Soluções Implementadas:**
 
-**Thresholds:**
-- `hand_touch_threshold`: 50 pixels (distância para considerar "toque")
-- `gesture_cooldown`: 0.5 segundos (entre reconhecimentos)
-- `hand_detection_confidence`: 0.7 (confiança mínima)
+1. **Otimização do Loop Principal:**
+```python
+async def main():
+    """Loop assíncrono para melhor performance."""
+    while True:
+        app.update_loop()
+        await asyncio.sleep(0.1 / CONFIG['fps'])  # Controle preciso de FPS
+```
 
-### 🎨 Sistema de Cores
+2. **Processamento Seletivo:**
+```python
+def selective_processing(self, frame):
+    """Processa apenas quando necessário."""
+    if self.game_state in ["WAIT_INPUT", "CHECKING"]:
+        return self.process_hands(frame)
+    return None  # Pula processamento em estados desnecessários
+```
 
-**Cores Disponíveis (RGB):**
-- Vermelho: (255, 0, 0)
-- Verde: (0, 255, 0)
-- Azul: (0, 0, 255)
-- Amarelo: (255, 255, 0)
-- Magenta: (255, 0, 255)
-- Ciano: (0, 255, 255)
-- Laranja: (255, 165, 0)
-- Roxo: (128, 0, 128)
-- Rosa: (255, 192, 203)
+3. **Cache de Objetos MediaPipe:**
+```python
+# Reutilização de objetos para evitar overhead de criação
+self.hands = self.mp_hands.Hands(**CONFIG['hands_config'])
+# Mantém instância durante toda a execução
+```
 
-**Transparência:** Configurável via `area_transparency` (0.0-1.0)
+### 🎯 Desafio 4: Experiência do Usuário
 
-## 🔊 Sistema de Áudio
+**Problema:**
+- Feedback visual insuficiente
+- Curva de aprendizado steep
+- Falta de guidance para posicionamento
 
-### 📁 Assets de Áudio
+**Soluções Implementadas:**
 
-| Arquivo | Função | Trigger |
-|---------|---------|---------|
-| `success.wav` | Som de sucesso | Sequência completada corretamente |
-| `error.wav` | Som de erro | Interação incorreta |
-| `sequence.wav` | Som da sequência | Durante exibição das cores |
-| `crash_1.wav` | Som de crash | Efeitos adicionais |
-| `hihat_1.wav` | Som de hihat | Efeitos adicionais |
-| `snare_1.wav` | Som de snare | Efeitos adicionais |
+1. **Sistema de Feedback Visual:**
+```python
+def draw_interaction_feedback(self, frame, hand_pos, area_index):
+    """Feedback visual para interações."""
+    # Círculo verde para detecção válida
+    cv2.circle(frame, hand_pos, 20, (0, 255, 0), 3)
+    # Highlight da área ativa
+    self.highlight_active_area(frame, area_index)
+```
+
+2. **Sistema de Instruções Dinâmicas:**
+```python
+def draw_instructions(self, frame):
+    """Instruções contextuais baseadas no estado."""
+    instructions = {
+        "SHOW_SEQUENCE": "Memorize a sequência de cores",
+        "WAIT_INPUT": "Toque as áreas com a mão indicada",
+        "SUCCESS": "Parabéns! Próxima sequência...",
+        "FAILURE": "Tente novamente!"
+    }
+    cv2.putText(frame, instructions[self.game_state], ...)
+```
+
+3. **Script de Teste Dedicado:**
+```python
+# test_system.py
+def test_camera_and_hands():
+    """Teste interativo para verificar setup."""
+    # Permite ao usuário verificar se tudo está funcionando
+    # antes de jogar
+```
+
+### 🎯 Desafio 5: Gerenciamento de Estado Complexo
+
+**Problema:**
+- Transições de estado inconsistentes
+- Race conditions entre detecção e lógica
+- Estado global compartilhado
+
+**Soluções Implementadas:**
+
+1. **State Machine Formal:**
+```python
+class GameStateMachine:
+    """Máquina de estados formal com validação."""
+    
+    VALID_TRANSITIONS = {
+        "INIT": ["SHOW_SEQUENCE"],
+        "SHOW_SEQUENCE": ["WAIT_INPUT"],
+        # ... outras transições
+    }
+    
+    def transition_to(self, new_state):
+        """Transição validada entre estados."""
+        if new_state not in self.VALID_TRANSITIONS[self.current_state]:
+            raise InvalidTransitionError(f"Cannot transition from {self.current_state} to {new_state}")
+        self.current_state = new_state
+```
+
+2. **Locks para Race Conditions:**
+```python
+import threading
+
+class MemoryGame:
+    def __init__(self):
+        self.state_lock = threading.Lock()
+    
+    def safe_state_transition(self, new_state):
+        """Transição thread-safe."""
+        with self.state_lock:
+            self.game_state = new_state
+```
+
+3. **Event-Driven Architecture:**
+```python
+def handle_hand_interaction(self, hand_data):
+    """Processa interação apenas no estado correto."""
+    if self.game_state != "WAIT_INPUT":
+        return  # Ignora interações em estados inadequados
+    
+    self.process_interaction(hand_data)
+```
 
 ## 🎛️ Sistema de Configuração
 
@@ -259,18 +367,103 @@ logging.basicConfig(
 | Áudio não funciona | Sistema/arquivos | Modo silencioso |
 | Performance baixa | Hardware limitado | Redução automática de qualidade |
 
-## 🔄 Versionamento e Deploy
+## 💻 Análise Detalhada do Código
 
-### 📦 Gerenciamento de Dependências
+### 🔍 Estrutura da Classe Principal (MemoryGame)
 
-**uv (Recomendado):**
-```bash
-uv sync                    # Instalar dependências
-uv run python __main__.py  # Executar com uv
+A classe `MemoryGame` é o núcleo do sistema e implementa o padrão State Machine:
+
+```python
+class MemoryGame:
+    def __init__(self):
+        # Inicialização do MediaPipe
+        self.mp_hands = mp.solutions.hands
+        self.mp_draw = mp.solutions.drawing_utils
+        
+        # Estado do jogo
+        self.game_state = "INIT"
+        self.sequence = []
+        self.current_sequence_index = 0
+        
+        # Áreas do jogo (grid 3x3)
+        self.game_areas = []
+        self.area_colors = []
+        self.area_hands = []
 ```
 
-**pip (Alternativo):**
-```bash
-pip install -r requirements.txt
-python __main__.py
+**Principais Métodos:**
+
+1. **`setup()`**: Inicialização de recursos
+   - Configuração da câmera
+   - Inicialização do MediaPipe
+   - Setup do Pygame para áudio
+
+2. **`update_loop()`**: Loop principal do jogo
+   - Captura de frames da câmera
+   - Processamento de detecção de mãos
+   - Atualização da lógica de estado
+   - Renderização da interface
+
+3. **`process_hands()`**: Processamento das mãos detectadas
+   - Conversão de landmarks para coordenadas da tela
+   - Detecção de interações com as áreas do jogo
+   - Aplicação de cooldown para evitar spam
+
+4. **`check_hand_interaction()`**: Validação de interações
+   - Cálculo de proximidade entre mão e área
+   - Verificação da mão correta (esquerda/direita)
+   - Trigger de eventos de jogo
+
+### 🎯 Sistema de Estados Detalhado
+
+```python
+def update_game_logic(self):
+    """Atualiza a lógica baseada no estado atual."""
+    if self.game_state == "INIT":
+        self.initialize_new_game()
+    elif self.game_state == "SHOW_SEQUENCE":
+        self.display_sequence()
+    elif self.game_state == "WAIT_INPUT":
+        self.wait_for_user_input()
+    elif self.game_state == "CHECKING":
+        self.validate_user_input()
+    elif self.game_state == "SUCCESS":
+        self.handle_success()
+    elif self.game_state == "FAILURE":
+        self.handle_failure()
 ```
+
+### 🖐️ Algoritmo de Detecção de Mãos
+
+```python
+def get_hand_center(self, landmarks, width, height):
+    """Calcula o centro da palma da mão."""
+    # Usa landmarks específicos da palma (índices 0, 5, 9, 13, 17)
+    palm_landmarks = [0, 5, 9, 13, 17]
+    x_coords = [landmarks.landmark[i].x * width for i in palm_landmarks]
+    y_coords = [landmarks.landmark[i].y * height for i in palm_landmarks]
+    
+    center_x = sum(x_coords) / len(x_coords)
+    center_y = sum(y_coords) / len(y_coords)
+    
+    return int(center_x), int(center_y)
+```
+
+## 👥 Participação dos Membros da Equipe
+
+### 🏗️ Divisão de Responsabilidades
+
+### 🤝 Metodologia de Desenvolvimento
+
+**Workflow Colaborativo:**
+1. **Todo**: Tarefas a serem executadas
+2. **Doing**: Desenvolvimento paralelo de módulos
+3. **Code Review**: Revisão cruzada de código
+4. **Testing**: Testes individuais e de integração
+5. **Done**: Tarefa concluida
+
+**Ferramentas de Colaboração:**
+- **Git**: Controle de versão distribuído
+- **GitHub**: Repositório central e issue tracking
+- **Code Review**: Revisão cruzada de código
+
