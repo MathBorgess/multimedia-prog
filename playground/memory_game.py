@@ -40,7 +40,8 @@ class MemoryGame:
         self.sequence_start_time = 0
         self.last_sequence_sound = 0
         self.last_interaction_time = 0
-        self.interaction_cooldown = 0.3  # Reduced for more responsive interaction
+        self.interaction_cooldown = 1.0  # Increased to prevent double detection
+        self.last_touched_area = -1  # Track last touched area to prevent repeated touches
 
         # Colors for the game
         self.colors = CONFIG['game_colors']
@@ -216,6 +217,7 @@ class MemoryGame:
         self.selected_areas.clear()
         self.hover_areas.clear()
         self.error_flash_start = 0
+        self.last_touched_area = -1  # Reset touched area tracking
 
         # Generate random sequence
         for _ in range(self.sequence_length):
@@ -229,21 +231,50 @@ class MemoryGame:
         logger.info(f"Sequence: {self.sequence}")
 
     def _setup_random_areas(self) -> None:
-        """Setup random colors and hand indicators for the 9 areas."""
+        """Setup colors and hand indicators for the 9 areas, ensuring sequence colors are available."""
         self.area_colors = []
         self.area_hands = []
 
-        for _ in range(9):
-            # Random color index
-            color_idx = random.randint(0, len(self.colors) - 1)
-            self.area_colors.append(color_idx)
+        # First, ensure all colors from the sequence are represented in the areas
+        # Get unique colors from sequence
+        sequence_colors = list(set(self.sequence))
+        available_positions = list(range(9))
 
+        # Place sequence colors in random positions
+        for color_idx in sequence_colors:
+            if available_positions:
+                pos = random.choice(available_positions)
+                available_positions.remove(pos)
+                # Temporarily store color at this position
+                while len(self.area_colors) <= pos:
+                    self.area_colors.append(-1)
+                self.area_colors[pos] = color_idx
+
+        # Fill remaining positions with random colors (can include duplicates)
+        for pos in available_positions:
+            color_idx = random.randint(0, len(self.colors) - 1)
+            while len(self.area_colors) <= pos:
+                self.area_colors.append(-1)
+            self.area_colors[pos] = color_idx
+
+        # Fill any gaps with random colors
+        for i in range(9):
+            if i >= len(self.area_colors) or self.area_colors[i] == -1:
+                while len(self.area_colors) <= i:
+                    self.area_colors.append(-1)
+                self.area_colors[i] = random.randint(0, len(self.colors) - 1)
+
+        # Setup hand indicators for all 9 areas
+        for _ in range(9):
             # Random hand (0 = left, 1 = right)
             hand = random.randint(0, 1)
             self.area_hands.append(hand)
 
+        logger.info(f"Area colors: {self.area_colors}")
+        logger.info(f"Sequence colors needed: {sequence_colors}")
+
     def _draw_border_flash(self, frame: np.ndarray, color_index: int, elapsed_time: float) -> None:
-        """Draw flashing border with the current sequence color."""
+        """Draw flashing border with the current sequence color and highlight matching areas."""
         flash_duration = CONFIG['border_flash_duration']
         if elapsed_time > flash_duration:
             return
@@ -260,6 +291,68 @@ class MemoryGame:
             cv2.rectangle(frame, (0, h-thickness), (w, h), color, -1)  # Bottom
             cv2.rectangle(frame, (0, 0), (thickness, h), color, -1)  # Left
             cv2.rectangle(frame, (w-thickness, 0), (w, h), color, -1)  # Right
+
+        # Highlight areas that match the current sequence color
+        self._highlight_matching_areas(frame, color_index, elapsed_time)
+
+    def _highlight_matching_areas(self, frame: np.ndarray, color_index: int, elapsed_time: float) -> None:
+        """Highlight areas that match the current sequence color during sequence display."""
+        if not self.game_areas:
+            return
+
+        flash_cycle = 0.4  # seconds for area highlighting
+        show_highlight = (elapsed_time % (flash_cycle * 2)) < flash_cycle
+
+        if show_highlight:
+            # Find areas with matching color
+            for i, (x, y, w, h) in enumerate(self.game_areas):
+                if i < len(self.area_colors) and self.area_colors[i] == color_index:
+                    # Create a bright outline around matching areas
+                    highlight_color = (255, 255, 255)  # White highlight
+                    thickness = 8
+                    cv2.rectangle(frame, (x-thickness//2, y-thickness//2),
+                                  (x + w + thickness//2, y + h + thickness//2),
+                                  highlight_color, thickness)
+
+                    # Add a subtle glow effect
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (x, y), (x + w, y + h),
+                                  highlight_color, -1)
+                    cv2.addWeighted(frame, 0.9, overlay, 0.1, 0, frame)
+
+    def _draw_sequence_progress(self, frame: np.ndarray, current_idx: int, total: int, current_color: int) -> None:
+        """Draw sequence progress and current color indicator."""
+        h, w = frame.shape[:2]
+
+        # Draw progress text
+        progress_text = f"Memorize: {current_idx + 1}/{total}"
+        text_size = cv2.getTextSize(
+            progress_text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+        text_x = (w - text_size[0]) // 2
+        text_y = 50
+
+        # Background for text
+        padding = 10
+        cv2.rectangle(frame, (text_x - padding, text_y - text_size[1] - padding),
+                      (text_x + text_size[0] + padding, text_y + padding),
+                      (0, 0, 0), -1)
+
+        # Text
+        cv2.putText(frame, progress_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+        # Draw current color indicator
+        color = self.colors[current_color]
+        color_rect_size = 40
+        color_x = text_x + text_size[0] + 20
+        color_y = text_y - color_rect_size + 10
+
+        cv2.rectangle(frame, (color_x, color_y),
+                      (color_x + color_rect_size, color_y + color_rect_size),
+                      color, -1)
+        cv2.rectangle(frame, (color_x, color_y),
+                      (color_x + color_rect_size, color_y + color_rect_size),
+                      (255, 255, 255), 2)
 
     def _draw_game_areas(self, frame: np.ndarray) -> None:
         """Draw the 3x3 grid with semi-transparent colors, hand indicators, and visual feedback."""
@@ -352,18 +445,27 @@ class MemoryGame:
             cv2.rectangle(frame, (x, y), (x + w, y + h),
                           border_color, border_thickness)
 
-            # Draw hand indicator
+            # Draw hand indicator with better visibility
             hand_text = "L" if self.area_hands[i] == 0 else "R"
             text_size = cv2.getTextSize(
-                hand_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 3)[0]
+                hand_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
             text_x = x + (w - text_size[0]) // 2
             text_y = y + (h + text_size[1]) // 2
 
             # Draw text with outline for better visibility
             cv2.putText(frame, hand_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 5)  # Black outline
+                        # Black outline
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 4)
             cv2.putText(frame, hand_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)  # White text
+                        # White text
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
+
+            # Draw area number for debugging (can be removed later)
+            number_text = str(i)
+            number_size = cv2.getTextSize(
+                number_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+            cv2.putText(frame, number_text, (x + 5, y + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     def _check_area_interaction(self, hand_pos: Tuple[int, int], hand_label: str) -> Optional[int]:
         """Check if hand position is touching any area and return area index."""
@@ -381,7 +483,12 @@ class MemoryGame:
                 # Check if correct hand is used
                 expected_hand = "Left" if self.area_hands[i] == 0 else "Right"
                 if hand_label == expected_hand:
+                    # Additional check to prevent double detection of same area
+                    if i == self.last_touched_area and current_time - self.last_interaction_time < 2.0:
+                        return None  # Ignore repeated touches of same area too quickly
                     return i
+
+        return None
 
     def _draw_error_notification(self, frame: np.ndarray) -> None:
         """Draw animated error notification overlay."""
@@ -528,6 +635,7 @@ class MemoryGame:
 
         current_time = time.time()
         detected_hands = []
+        any_hand_touching_areas = False
 
         if result.multi_hand_landmarks and result.multi_handedness:
             for idx, (hand_landmarks, handedness) in enumerate(zip(result.multi_hand_landmarks, result.multi_handedness)):
@@ -544,6 +652,12 @@ class MemoryGame:
                 self.mp_draw.draw_landmarks(
                     frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
+                # Check if hand is currently touching any area
+                for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
+                    if (area_x <= x <= area_x + area_w and area_y <= y <= area_y + area_h):
+                        any_hand_touching_areas = True
+                        break
+
                 # Check for area interactions during input phase
                 if self.game_state == "WAIT_INPUT" and current_time - self.last_interaction_time > self.interaction_cooldown:
                     area_idx = self._check_area_interaction((x, y), hand_label)
@@ -552,10 +666,13 @@ class MemoryGame:
                         expected_color = self.sequence[self.current_sequence_index]
                         actual_color = self.area_colors[area_idx]
 
+                        # Update interaction tracking
+                        self.last_interaction_time = current_time
+                        self.last_touched_area = area_idx
+
                         if expected_color == actual_color:
                             # Correct selection
                             self.current_sequence_index += 1
-                            self.last_interaction_time = current_time
 
                             # Add visual feedback for correct selection
                             self.selected_areas[area_idx] = {
@@ -571,7 +688,6 @@ class MemoryGame:
                         else:
                             # Wrong selection
                             self.game_state = "FAILURE"
-                            self.last_interaction_time = current_time
 
                             # Add visual feedback for wrong selection
                             self.selected_areas[area_idx] = {
@@ -587,6 +703,10 @@ class MemoryGame:
 
                             logger.info("Wrong color! Game over.")
 
+        # Reset last touched area if no hand is currently touching any area
+        if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
+            self.last_touched_area = -1
+
         # Draw game elements based on state
         if self.game_state == "SHOW_SEQUENCE":
             elapsed = current_time - self.sequence_start_time
@@ -596,8 +716,12 @@ class MemoryGame:
 
             if current_color_idx < len(self.sequence):
                 color_elapsed = elapsed - (current_color_idx * color_duration)
-                self._draw_border_flash(
-                    frame, self.sequence[current_color_idx], color_elapsed)
+                sequence_color = self.sequence[current_color_idx]
+                self._draw_border_flash(frame, sequence_color, color_elapsed)
+
+                # Show sequence progress
+                self._draw_sequence_progress(
+                    frame, current_color_idx, len(self.sequence), sequence_color)
 
         elif self.game_state in ["WAIT_INPUT", "SUCCESS", "FAILURE"]:
             self._draw_game_areas(frame)
@@ -620,7 +744,7 @@ class MemoryGame:
             self._draw_error_notification(frame)
 
         # Draw UI
-        self._draw_ui(frame)
+        self._draw_ui(frame, current_time)
 
         # Process game logic
         self._process_game_logic(current_time)
@@ -633,7 +757,7 @@ class MemoryGame:
             logger.info("Exit requested by user.")
             raise SystemExit
 
-    def _draw_ui(self, frame: np.ndarray) -> None:
+    def _draw_ui(self, frame: np.ndarray, current_time: float) -> None:
         """Draw game UI elements."""
         # Score
         cv2.putText(frame, f"Score: {self.score}", (10, 30),
@@ -643,17 +767,104 @@ class MemoryGame:
         cv2.putText(frame, f"Length: {self.sequence_length}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Game state
+        # Game state with more helpful instructions
         state_text = {
-            "SHOW_SEQUENCE": "Memorize the sequence!",
-            "WAIT_INPUT": f"Touch areas in order ({self.current_sequence_index + 1}/{len(self.sequence)})",
+            "SHOW_SEQUENCE": "Memorize the sequence! Watch the flashing border colors.",
+            "WAIT_INPUT": f"Touch matching areas with correct hand! ({self.current_sequence_index + 1}/{len(self.sequence)})",
             "SUCCESS": "Success! Next level...",
             "FAILURE": "Game Over! Restarting..."
         }.get(self.game_state, "")
 
         if state_text:
-            cv2.putText(frame, state_text, (10, frame.shape[0] - 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            # Multi-line text support
+            lines = state_text.split('!')
+            y_offset = frame.shape[0] - 60
+            for i, line in enumerate(lines):
+                if line.strip():  # Skip empty lines
+                    cv2.putText(frame, line.strip() + ('!' if i < len(lines) - 1 else ''),
+                                (10, y_offset + i * 25),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+        # Show current sequence during input phase
+        if self.game_state == "WAIT_INPUT" and self.sequence:
+            self._draw_sequence_reminder(frame)
+
+        # Show cooldown indicator if active
+        if self.game_state == "WAIT_INPUT":
+            self._draw_interaction_cooldown(frame, current_time)
+
+    def _draw_sequence_reminder(self, frame: np.ndarray) -> None:
+        """Draw a small reminder of the sequence colors during input phase."""
+        if not self.sequence:
+            return
+
+        h, w = frame.shape[:2]
+
+        # Draw sequence colors as small rectangles
+        rect_size = 25
+        spacing = 5
+        start_x = w - (len(self.sequence) * (rect_size + spacing)) - 20
+        start_y = 20
+
+        # Background
+        bg_width = len(self.sequence) * (rect_size + spacing) + 10
+        cv2.rectangle(frame, (start_x - 10, start_y - 5),
+                      (start_x + bg_width, start_y + rect_size + 10),
+                      (0, 0, 0), -1)
+
+        # Draw each color in sequence
+        for i, color_idx in enumerate(self.sequence):
+            x = start_x + i * (rect_size + spacing)
+            y = start_y
+
+            color = self.colors[color_idx]
+
+            # Highlight current position in sequence
+            if i == self.current_sequence_index:
+                # Bright border for current position
+                cv2.rectangle(frame, (x - 3, y - 3),
+                              (x + rect_size + 3, y + rect_size + 3),
+                              (255, 255, 0), 3)  # Yellow highlight
+            elif i < self.current_sequence_index:
+                # Green border for completed positions
+                cv2.rectangle(frame, (x - 2, y - 2),
+                              (x + rect_size + 2, y + rect_size + 2),
+                              (0, 255, 0), 2)  # Green border
+
+            # Draw color rectangle
+            cv2.rectangle(frame, (x, y), (x + rect_size,
+                          y + rect_size), color, -1)
+            cv2.rectangle(frame, (x, y), (x + rect_size,
+                          y + rect_size), (255, 255, 255), 1)
+
+    def _draw_interaction_cooldown(self, frame: np.ndarray, current_time: float) -> None:
+        """Draw cooldown indicator when interaction is temporarily disabled."""
+        if current_time - self.last_interaction_time < self.interaction_cooldown:
+            h, w = frame.shape[:2]
+
+            # Calculate remaining cooldown time
+            remaining_time = self.interaction_cooldown - \
+                (current_time - self.last_interaction_time)
+            cooldown_text = f"Wait: {remaining_time:.1f}s"
+
+            # Position near the center bottom
+            text_size = cv2.getTextSize(
+                cooldown_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+            text_x = (w - text_size[0]) // 2
+            text_y = h - 120
+
+            # Semi-transparent background
+            padding = 10
+            overlay = frame.copy()
+            cv2.rectangle(overlay,
+                          (text_x - padding, text_y - text_size[1] - padding),
+                          (text_x + text_size[0] + padding, text_y + padding),
+                          (0, 0, 0), -1)
+            cv2.addWeighted(frame, 0.7, overlay, 0.3, 0, frame)
+
+            # Orange text for cooldown
+            cv2.putText(frame, cooldown_text, (text_x, text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
 
     def cleanup(self) -> None:
         """Release resources."""
