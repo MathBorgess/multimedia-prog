@@ -4,12 +4,18 @@ CONFIG = {
     'border_flash_duration': 1.0,  # seconds (slower)
     'color_pause_duration': 0.8,   # seconds between colors (slower)
     'success_pause_duration': 1.5,  # seconds after success
-    'failure_pause_duration': 2.5,  # seconds after failure
+    # seconds after failure (deprecated, using countdown now)
+    'failure_pause_duration': 2.5,
+    'countdown_duration': 5,        # seconds countdown before restart
 
     # Visual settings
     # transparency for areas (0.0 = transparent, 1.0 = opaque)
     'area_transparency': 0.5,      # Slightly more transparent for better feedback
     'border_thickness': 25,        # border thickness for sequence display
+
+    # Error message settings
+    'error_display_duration': 2.5,  # seconds to show error message
+    'error_flash_duration': 2.0,    # seconds for error flash effect
 
     # Sound settings
     'enable_sounds': True,

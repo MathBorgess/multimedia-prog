@@ -25,11 +25,13 @@ class MemoryGame:
         self.available_cameras = []
 
         # Game state
-        self.game_state = "INIT"  # INIT, SHOW_SEQUENCE, WAIT_INPUT, CHECKING, SUCCESS, FAILURE
+        # INIT, SHOW_SEQUENCE, WAIT_INPUT, CHECKING, SUCCESS, FAILURE, COUNTDOWN
+        self.game_state = "INIT"
         self.sequence = []
         self.current_sequence_index = 0
         self.score = 0
         self.sequence_length = CONFIG['sequence_start_length']
+        self.init_start_time = 0  # For initial instructions display
 
         # Game areas (3x3 grid)
         self.game_areas = []
@@ -49,6 +51,13 @@ class MemoryGame:
         # Hand detection
         self.prev_positions: Dict[str, Tuple[int, int, float]] = {}
         self.hand_labels = []
+
+        # Error and countdown handling
+        self.countdown_start_time = 0
+        self.countdown_duration = CONFIG.get(
+            'countdown_duration', 5)  # 5 seconds countdown default
+        self.error_message = ""
+        self.error_type = "general"  # general, wrong_color, wrong_hand, wrong_area
 
         # Sound system
         self.sound_enabled = CONFIG['enable_sounds']
@@ -101,6 +110,10 @@ class MemoryGame:
         # Initialize camera
         self._init_camera_with_retry()
         self._setup_game_areas()
+
+        # Set initial timer for instructions display
+        self.init_start_time = time.time()
+
         self._start_new_game()
 
     def _load_sounds(self) -> None:
@@ -226,6 +239,11 @@ class MemoryGame:
         self.error_flash_start = 0
         self.last_touched_area = -1  # Reset touched area tracking
 
+        # Clear error messages
+        self.error_message = ""
+        self.error_type = "general"
+        self.countdown_start_time = 0
+
         # Generate random sequence
         for _ in range(self.sequence_length):
             self.sequence.append(random.randint(0, len(self.colors) - 1))
@@ -236,6 +254,16 @@ class MemoryGame:
         logger.info(
             f"Starting new game - Sequence length: {self.sequence_length}")
         logger.info(f"Sequence: {self.sequence}")
+
+    def _get_color_name(self, color_index: int) -> str:
+        """Get human-readable color name from color index."""
+        color_names = [
+            "Red", "Green", "Blue", "Yellow", "Magenta",
+            "Cyan", "Orange", "Purple", "Pink"
+        ]
+        if 0 <= color_index < len(color_names):
+            return color_names[color_index]
+        return f"Color {color_index}"
 
     def _setup_random_areas(self) -> None:
         """Setup colors and hand indicators for the 9 areas, ensuring sequence colors are available."""
@@ -500,6 +528,16 @@ class MemoryGame:
                         return None  # Ignore repeated touches of same area too quickly
                     return i
 
+    def _check_area_touched(self, hand_pos: Tuple[int, int]) -> Optional[int]:
+        """Check if hand position is touching any area regardless of hand type."""
+        x, y = hand_pos
+
+        for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
+            if (area_x <= x <= area_x + area_w and
+                    area_y <= y <= area_y + area_h):
+                return i
+        return None
+
         return None
 
     def _check_timed_area_selection(self, hand_pos: Tuple[int, int], hand_label: str, current_time: float) -> Optional[int]:
@@ -552,7 +590,7 @@ class MemoryGame:
         current_time = time.time()
         error_duration = current_time - self.error_flash_start
 
-        if error_duration > 1.0:  # Error notification duration
+        if error_duration > 4.0:  # Extended error notification duration
             self.error_flash_start = 0
             return
 
@@ -562,10 +600,10 @@ class MemoryGame:
         overlay = frame.copy()
 
         # Calculate flash intensity (fade out over time)
-        intensity = max(0, 1 - error_duration)
+        intensity = max(0, 1 - error_duration / 2.0)
 
         # Create pulsing effect
-        pulse_frequency = 8  # pulses per second
+        pulse_frequency = 6  # pulses per second
         pulse = 0.3 + 0.7 * \
             abs(np.sin(error_duration * pulse_frequency * 2 * np.pi))
 
@@ -573,25 +611,173 @@ class MemoryGame:
         red_overlay = np.zeros_like(frame)
         red_overlay[:, :] = (0, 0, 255)  # Red color
 
-        alpha = intensity * pulse * 0.3  # Max 30% opacity
+        alpha = intensity * pulse * 0.25  # Max 25% opacity
         cv2.addWeighted(frame, 1 - alpha, red_overlay, alpha, 0, frame)
 
-        # Draw error text
-        error_text = "WRONG COLOR!"
+        # Draw error text - use custom message if available
+        error_text = self.error_message if self.error_message else "WRONG!"
+
+        # Split long messages into multiple lines
+        lines = []
+        if len(error_text) > 25:
+            words = error_text.split()
+            current_line = ""
+            for word in words:
+                if len(current_line + " " + word) <= 25:
+                    current_line += (" " if current_line else "") + word
+                else:
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = word
+            if current_line:
+                lines.append(current_line)
+        else:
+            lines = [error_text]
+
+        # Draw each line
+        text_alpha = intensity * pulse
+        if text_alpha > 0.3:
+            font_scale = 1.5 if len(lines) > 1 else 2
+            thickness = 3 if len(lines) > 1 else 6
+            line_height = 60
+
+            for i, line in enumerate(lines):
+                text_size = cv2.getTextSize(
+                    line, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+                text_x = (w - text_size[0]) // 2
+                text_y = h // 2 - (len(lines) - 1) * \
+                    line_height // 2 + i * line_height
+
+                # Black outline
+                cv2.putText(frame, line, (text_x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness + 2)
+                # White text
+                cv2.putText(frame, line, (text_x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+
+    def _draw_selection_progress_indicator(self, frame: np.ndarray, current_time: float) -> None:
+        """Draw progress indicator for any area currently being selected."""
+        if not self.area_selection_progress:
+            return
+            
+        h, w = frame.shape[:2]
+        
+        for area_idx, progress_info in self.area_selection_progress.items():
+            if area_idx < len(self.game_areas):
+                area_x, area_y, area_w, area_h = self.game_areas[area_idx]
+                
+                # Calculate progress
+                time_elapsed = current_time - progress_info['start_time']
+                progress = min(time_elapsed / self.selection_time_threshold, 1.0)
+                
+                # Draw progress bar above the area
+                bar_width = area_w - 20
+                bar_height = 8
+                bar_x = area_x + 10
+                bar_y = area_y - 20
+                
+                # Background of progress bar
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (0, 0, 0), -1)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 1)
+                
+                # Progress fill
+                progress_width = int(bar_width * progress)
+                if progress_width > 0:
+                    # Color changes from yellow to green as it progresses
+                    color = (0, int(255 * progress), int(255 * (1 - progress)))  # Yellow to green
+                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x + progress_width, bar_y + bar_height), color, -1)
+                
+                # Show percentage text
+                percentage_text = f"{int(progress * 100)}%"
+                text_size = cv2.getTextSize(percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                text_x = bar_x + (bar_width - text_size[0]) // 2
+                text_y = bar_y - 5
+                cv2.putText(frame, percentage_text, (text_x, text_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+    def _draw_countdown_notification(self, frame: np.ndarray) -> None:
+        """Draw countdown notification for next session."""
+        if self.game_state != "COUNTDOWN" or self.countdown_start_time <= 0:
+            return
+
+        current_time = time.time()
+        elapsed = current_time - self.countdown_start_time
+        remaining = max(0, self.countdown_duration - elapsed)
+
+        if remaining <= 0:
+            return
+
+        h, w = frame.shape[:2]
+
+        # Create semi-transparent overlay
+        overlay = np.zeros_like(frame)
+        overlay[:, :] = (50, 50, 50)  # Dark gray
+        alpha = 0.7
+        cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0, frame)
+
+        # Countdown number
+        countdown_num = int(remaining) + 1
+        countdown_text = str(countdown_num)
+
+        # Large countdown number
+        font_scale = 8
+        thickness = 12
         text_size = cv2.getTextSize(
-            error_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 3)[0]
+            countdown_text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
         text_x = (w - text_size[0]) // 2
         text_y = h // 2
 
-        # Text with pulsing effect
-        text_alpha = intensity * pulse
-        if text_alpha > 0.3:
-            # Black outline
-            cv2.putText(frame, error_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 0), 6)
-            # White text
-            cv2.putText(frame, error_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+        # Pulsing effect for countdown
+        pulse = 0.8 + 0.2 * abs(np.sin(elapsed * 3 * np.pi))
+        pulse_scale = font_scale * pulse
+        pulse_thickness = int(thickness * pulse)
+
+        # Red countdown number with white outline
+        cv2.putText(frame, countdown_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, pulse_scale, (0, 0, 0), pulse_thickness + 4)
+        cv2.putText(frame, countdown_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, pulse_scale, (0, 0, 255), pulse_thickness)
+
+        # "Restarting in..." text
+        restart_text = "Restarting in..."
+        restart_size = cv2.getTextSize(
+            restart_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+        restart_x = (w - restart_size[0]) // 2
+        restart_y = text_y - 100
+
+        cv2.putText(frame, restart_text, (restart_x, restart_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 0), 5)
+        cv2.putText(frame, restart_text, (restart_x, restart_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 3)
+
+        # Error message at bottom
+        if self.error_message:
+            error_lines = []
+            if len(self.error_message) > 40:
+                words = self.error_message.split()
+                current_line = ""
+                for word in words:
+                    if len(current_line + " " + word) <= 40:
+                        current_line += (" " if current_line else "") + word
+                    else:
+                        if current_line:
+                            error_lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    error_lines.append(current_line)
+            else:
+                error_lines = [self.error_message]
+
+            for i, line in enumerate(error_lines):
+                error_size = cv2.getTextSize(
+                    line, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+                error_x = (w - error_size[0]) // 2
+                error_y = text_y + 120 + i * 30
+
+                cv2.putText(frame, line, (error_x, error_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 4)
+                cv2.putText(frame, line, (error_x, error_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 200, 200), 2)
 
     def _draw_success_notification(self, frame: np.ndarray, progress: str) -> None:
         """Draw success notification with progress."""
@@ -622,7 +808,13 @@ class MemoryGame:
 
     def _process_game_logic(self, current_time: float) -> None:
         """Process the main game logic based on current state."""
-        if self.game_state == "SHOW_SEQUENCE":
+        if self.game_state == "INIT":
+            # Show instructions for a few seconds before starting
+            if current_time - self.init_start_time > 3.0:  # 3 seconds of instructions
+                self.game_state = "SHOW_SEQUENCE"
+                self.sequence_start_time = current_time
+
+        elif self.game_state == "SHOW_SEQUENCE":
             elapsed = current_time - self.sequence_start_time
             color_duration = CONFIG['border_flash_duration'] + \
                 CONFIG['color_pause_duration']
@@ -659,11 +851,17 @@ class MemoryGame:
         elif self.game_state == "FAILURE":
             # Player made a mistake
             self._play_sound('error')
-            logger.info("Game Over! Restarting...")
-            self.score = 0
-            self.sequence_length = CONFIG['sequence_start_length']
-            time.sleep(CONFIG['failure_pause_duration'])
-            self._start_new_game()
+            logger.info("Game Over! Starting countdown to restart...")
+            self.game_state = "COUNTDOWN"
+            self.countdown_start_time = time.time()
+
+        elif self.game_state == "COUNTDOWN":
+            # Countdown before restarting
+            elapsed = time.time() - self.countdown_start_time
+            if elapsed >= self.countdown_duration:
+                self.score = 0
+                self.sequence_length = CONFIG['sequence_start_length']
+                self._start_new_game()
 
     def update_loop(self) -> None:
         """Process one frame of the video feed."""
@@ -716,11 +914,10 @@ class MemoryGame:
                 if self.game_state == "WAIT_INPUT":
                     # Always update hover effects for visual feedback
                     self._check_area_interaction((x, y), hand_label)
-
+                    
                     # Check for timed selection (only if cooldown has passed)
                     if current_time - self.last_interaction_time > self.interaction_cooldown:
-                        area_idx = self._check_timed_area_selection(
-                            (x, y), hand_label, current_time)
+                        area_idx = self._check_timed_area_selection((x, y), hand_label, current_time)
                         if area_idx is not None:
                             # Check if this is the correct color in sequence
                             expected_color = self.sequence[self.current_sequence_index]
@@ -740,13 +937,18 @@ class MemoryGame:
                                     'type': 'correct'
                                 }
 
-                                # Play success sound with slight delay for better feedback
+                                # Play success sound
                                 self._play_sound('success')
 
                                 logger.info(
                                     f"Correct! Progress: {self.current_sequence_index}/{len(self.sequence)}")
                             else:
                                 # Wrong selection
+                                self.error_type = "wrong_color"
+                                expected_color_name = self._get_color_name(expected_color)
+                                actual_color_name = self._get_color_name(actual_color)
+                                self.error_message = f"Wrong Color! Expected {expected_color_name}, got {actual_color_name}"
+                                
                                 self.game_state = "FAILURE"
 
                                 # Add visual feedback for wrong selection
@@ -761,9 +963,11 @@ class MemoryGame:
                                 # Play error sound immediately
                                 self._play_sound('error')
 
-                                logger.info("Wrong color! Game over.")
+                                logger.info(f"Error: {self.error_message}")
 
         # Reset last touched area if no hand is currently touching any area
+        if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
+            self.last_touched_area = -1        # Reset last touched area if no hand is currently touching any area
         if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
             self.last_touched_area = -1
 
@@ -803,6 +1007,9 @@ class MemoryGame:
             # Draw error notification
             self._draw_error_notification(frame)
 
+        # Draw countdown notification
+        self._draw_countdown_notification(frame)
+
         # Draw UI
         self._draw_ui(frame, current_time)
 
@@ -816,9 +1023,24 @@ class MemoryGame:
         if key == ord('q'):
             logger.info("Exit requested by user.")
             raise SystemExit
+        elif key == ord('r') and self.game_state in ["FAILURE", "COUNTDOWN"]:
+            # Allow manual restart during failure/countdown
+            logger.info("Manual restart requested by user.")
+            self.score = 0
+            self.sequence_length = CONFIG['sequence_start_length']
+            self._start_new_game()
+        elif key == ord('s'):
+            # Skip countdown with 's' key
+            if self.game_state == "COUNTDOWN":
+                logger.info("Countdown skipped by user.")
+                self.score = 0
+                self.sequence_length = CONFIG['sequence_start_length']
+                self._start_new_game()
 
     def _draw_ui(self, frame: np.ndarray, current_time: float) -> None:
         """Draw game UI elements."""
+        h, w = frame.shape[:2]
+
         # Score
         cv2.putText(frame, f"Score: {self.score}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
@@ -827,105 +1049,51 @@ class MemoryGame:
         cv2.putText(frame, f"Length: {self.sequence_length}", (10, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Game state with more helpful instructions
+        # Game state
         state_text = {
-            "SHOW_SEQUENCE": "Memorize the sequence! Watch the flashing border colors.",
-            "WAIT_INPUT": f"Hold hand over correct areas for 1.5s to select! ({self.current_sequence_index + 1}/{len(self.sequence)})",
+            "SHOW_SEQUENCE": "Memorize the sequence!",
+            "WAIT_INPUT": f"Touch areas in order ({self.current_sequence_index + 1}/{len(self.sequence)})",
             "SUCCESS": "Success! Next level...",
             "FAILURE": "Game Over! Restarting..."
         }.get(self.game_state, "")
 
         if state_text:
-            # Multi-line text support
-            lines = state_text.split('!')
-            y_offset = frame.shape[0] - 60
-            for i, line in enumerate(lines):
-                if line.strip():  # Skip empty lines
-                    cv2.putText(frame, line.strip() + ('!' if i < len(lines) - 1 else ''),
-                                (10, y_offset + i * 25),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, state_text, (10, frame.shape[0] - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-        # Show cooldown indicator if active
-        if self.game_state == "WAIT_INPUT":
-            self._draw_interaction_cooldown(frame, current_time)
-            self._draw_selection_progress_indicator(frame, current_time)
-
-        # Note: Sequence reminder removed to maintain game difficulty - players must remember the sequence
-
-    def _draw_interaction_cooldown(self, frame: np.ndarray, current_time: float) -> None:
-        """Draw cooldown indicator when interaction is temporarily disabled."""
-        if current_time - self.last_interaction_time < self.interaction_cooldown:
-            h, w = frame.shape[:2]
-
-            # Calculate remaining cooldown time
-            remaining_time = self.interaction_cooldown - \
-                (current_time - self.last_interaction_time)
-            cooldown_text = f"Wait: {remaining_time:.1f}s"
-
-            # Position near the center bottom
-            text_size = cv2.getTextSize(
-                cooldown_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
-            text_x = (w - text_size[0]) // 2
-            text_y = h - 120
+        # Instructions for new players (show only during INIT state)
+        if self.game_state == "INIT" and self.score == 0:
+            instructions = [
+                "MEMORY & COORDINATION GAME",
+                "1. Watch the sequence of colors",
+                "2. Touch areas with the correct hand (L/R shown)",
+                "3. Follow the sequence in order",
+                "Get ready!"
+            ]
 
             # Semi-transparent background
-            padding = 10
-            overlay = frame.copy()
-            cv2.rectangle(overlay,
-                          (text_x - padding, text_y - text_size[1] - padding),
-                          (text_x + text_size[0] + padding, text_y + padding),
-                          (0, 0, 0), -1)
-            cv2.addWeighted(frame, 0.7, overlay, 0.3, 0, frame)
+            overlay = np.zeros_like(frame)
+            overlay[:, :] = (0, 0, 0)
+            alpha = 0.6
+            cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0, frame)
 
-            # Orange text for cooldown
-            cv2.putText(frame, cooldown_text, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+            for i, instruction in enumerate(instructions):
+                if i == 0:  # Title
+                    font_scale = 1.2
+                    thickness = 3
+                    color = (0, 255, 255)
+                else:
+                    font_scale = 0.8
+                    thickness = 2
+                    color = (255, 255, 255)
 
-    def _draw_selection_progress_indicator(self, frame: np.ndarray, current_time: float) -> None:
-        """Draw progress indicator for any area currently being selected."""
-        if not self.area_selection_progress:
-            return
-
-        h, w = frame.shape[:2]
-
-        for area_idx, progress_info in self.area_selection_progress.items():
-            if area_idx < len(self.game_areas):
-                area_x, area_y, area_w, area_h = self.game_areas[area_idx]
-
-                # Calculate progress
-                time_elapsed = current_time - progress_info['start_time']
-                progress = min(
-                    time_elapsed / self.selection_time_threshold, 1.0)
-
-                # Draw progress bar above the area
-                bar_width = area_w - 20
-                bar_height = 8
-                bar_x = area_x + 10
-                bar_y = area_y - 20
-
-                # Background of progress bar
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                              bar_width, bar_y + bar_height), (0, 0, 0), -1)
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                              bar_width, bar_y + bar_height), (255, 255, 255), 1)
-
-                # Progress fill
-                progress_width = int(bar_width * progress)
-                if progress_width > 0:
-                    # Color changes from yellow to green as it progresses
-                    color = (0, int(255 * progress), int(255 *
-                             (1 - progress)))  # Yellow to green
-                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                                  progress_width, bar_y + bar_height), color, -1)
-
-                # Show percentage text
-                percentage_text = f"{int(progress * 100)}%"
                 text_size = cv2.getTextSize(
-                    percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
-                text_x = bar_x + (bar_width - text_size[0]) // 2
-                text_y = bar_y - 5
-                cv2.putText(frame, percentage_text, (text_x, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                    instruction, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+                text_x = (w - text_size[0]) // 2
+                text_y = h // 2 - 100 + i * 40
+
+                cv2.putText(frame, instruction, (text_x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
 
     def cleanup(self) -> None:
         """Release resources."""
