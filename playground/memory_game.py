@@ -62,6 +62,12 @@ class MemoryGame:
         self.hover_areas = {}     # area_idx: time when started hovering
         self.error_flash_start = 0  # Time when error flash started
 
+        # Timed selection system
+        # Time in seconds to hold hand over area to select
+        self.selection_time_threshold = 0.75
+        # area_idx: {'start_time': time, 'hand_label': str}
+        self.area_selection_progress = {}
+
     def _check_camera_permissions(self) -> None:
         """Check camera permissions on macOS."""
         import platform
@@ -216,6 +222,7 @@ class MemoryGame:
         # Clear visual feedback
         self.selected_areas.clear()
         self.hover_areas.clear()
+        self.area_selection_progress.clear()  # Clear selection progress
         self.error_flash_start = 0
         self.last_touched_area = -1  # Reset touched area tracking
 
@@ -358,6 +365,37 @@ class MemoryGame:
                     # Remove expired hover
                     del self.hover_areas[i]
 
+            # Check for timed selection progress
+            if i in self.area_selection_progress:
+                progress = self.area_selection_progress[i]
+                time_elapsed = current_time - progress['start_time']
+                selection_progress = min(
+                    time_elapsed / self.selection_time_threshold, 1.0)
+
+                # Create brightening effect as selection progresses
+                brightness_multiplier = 1.0 + \
+                    (selection_progress * 1.5)  # Up to 2.5x brighter
+                bright_color = tuple(
+                    min(255, int(c * brightness_multiplier)) for c in color)
+
+                # Add pulsing effect when near completion
+                if selection_progress > 0.7:
+                    pulse_intensity = abs(
+                        np.sin(time_elapsed * 15)) * 0.3 + 0.7
+                    bright_color = tuple(
+                        min(255, int(c * brightness_multiplier * pulse_intensity)) for c in color)
+
+                # Override base color and alpha for selection progress
+                color = bright_color
+                base_alpha = min(
+                    0.9, CONFIG['area_transparency'] + selection_progress * 0.4)
+
+                # Add a white border that gets thicker as selection progresses
+                border_thickness = int(3 + selection_progress * 5)
+                cv2.rectangle(overlay, (x-border_thickness, y-border_thickness),
+                              (x + w + border_thickness, y + h + border_thickness),
+                              (255, 255, 255), border_thickness)
+
             # Check for selection feedback
             if i in self.selected_areas:
                 selection = self.selected_areas[i]
@@ -461,6 +499,48 @@ class MemoryGame:
                     if i == self.last_touched_area and current_time - self.last_interaction_time < 2.0:
                         return None  # Ignore repeated touches of same area too quickly
                     return i
+
+        return None
+
+    def _check_timed_area_selection(self, hand_pos: Tuple[int, int], hand_label: str, current_time: float) -> Optional[int]:
+        """Check for timed selection - hand must stay over area for a duration to select it."""
+        x, y = hand_pos
+
+        # Check which area the hand is currently over
+        current_area = None
+        for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
+            if (area_x <= x <= area_x + area_w and area_y <= y <= area_y + area_h):
+                expected_hand = "Left" if self.area_hands[i] == 0 else "Right"
+                if hand_label == expected_hand:
+                    current_area = i
+                    break
+
+        # Clean up progress for areas no longer being hovered
+        areas_to_remove = []
+        for area_idx in self.area_selection_progress:
+            if area_idx != current_area:
+                areas_to_remove.append(area_idx)
+
+        for area_idx in areas_to_remove:
+            del self.area_selection_progress[area_idx]
+
+        # If hand is over a valid area
+        if current_area is not None:
+            if current_area not in self.area_selection_progress:
+                # Start timing selection
+                self.area_selection_progress[current_area] = {
+                    'start_time': current_time,
+                    'hand_label': hand_label
+                }
+            else:
+                # Check if enough time has passed
+                progress = self.area_selection_progress[current_area]
+                time_elapsed = current_time - progress['start_time']
+
+                if time_elapsed >= self.selection_time_threshold:
+                    # Selection completed - remove from progress and return area
+                    del self.area_selection_progress[current_area]
+                    return current_area
 
         return None
 
@@ -633,49 +713,55 @@ class MemoryGame:
                         break
 
                 # Check for area interactions during input phase
-                if self.game_state == "WAIT_INPUT" and current_time - self.last_interaction_time > self.interaction_cooldown:
-                    area_idx = self._check_area_interaction((x, y), hand_label)
-                    if area_idx is not None:
-                        # Check if this is the correct color in sequence
-                        expected_color = self.sequence[self.current_sequence_index]
-                        actual_color = self.area_colors[area_idx]
+                if self.game_state == "WAIT_INPUT":
+                    # Always update hover effects for visual feedback
+                    self._check_area_interaction((x, y), hand_label)
 
-                        # Update interaction tracking
-                        self.last_interaction_time = current_time
-                        self.last_touched_area = area_idx
+                    # Check for timed selection (only if cooldown has passed)
+                    if current_time - self.last_interaction_time > self.interaction_cooldown:
+                        area_idx = self._check_timed_area_selection(
+                            (x, y), hand_label, current_time)
+                        if area_idx is not None:
+                            # Check if this is the correct color in sequence
+                            expected_color = self.sequence[self.current_sequence_index]
+                            actual_color = self.area_colors[area_idx]
 
-                        if expected_color == actual_color:
-                            # Correct selection
-                            self.current_sequence_index += 1
+                            # Update interaction tracking
+                            self.last_interaction_time = current_time
+                            self.last_touched_area = area_idx
 
-                            # Add visual feedback for correct selection
-                            self.selected_areas[area_idx] = {
-                                'start_time': current_time,
-                                'type': 'correct'
-                            }
+                            if expected_color == actual_color:
+                                # Correct selection
+                                self.current_sequence_index += 1
 
-                            # Play success sound with slight delay for better feedback
-                            self._play_sound('success')
+                                # Add visual feedback for correct selection
+                                self.selected_areas[area_idx] = {
+                                    'start_time': current_time,
+                                    'type': 'correct'
+                                }
 
-                            logger.info(
-                                f"Correct! Progress: {self.current_sequence_index}/{len(self.sequence)}")
-                        else:
-                            # Wrong selection
-                            self.game_state = "FAILURE"
+                                # Play success sound with slight delay for better feedback
+                                self._play_sound('success')
 
-                            # Add visual feedback for wrong selection
-                            self.selected_areas[area_idx] = {
-                                'start_time': current_time,
-                                'type': 'wrong'
-                            }
+                                logger.info(
+                                    f"Correct! Progress: {self.current_sequence_index}/{len(self.sequence)}")
+                            else:
+                                # Wrong selection
+                                self.game_state = "FAILURE"
 
-                            # Start error notification
-                            self.error_flash_start = current_time
+                                # Add visual feedback for wrong selection
+                                self.selected_areas[area_idx] = {
+                                    'start_time': current_time,
+                                    'type': 'wrong'
+                                }
 
-                            # Play error sound immediately
-                            self._play_sound('error')
+                                # Start error notification
+                                self.error_flash_start = current_time
 
-                            logger.info("Wrong color! Game over.")
+                                # Play error sound immediately
+                                self._play_sound('error')
+
+                                logger.info("Wrong color! Game over.")
 
         # Reset last touched area if no hand is currently touching any area
         if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
@@ -744,7 +830,7 @@ class MemoryGame:
         # Game state with more helpful instructions
         state_text = {
             "SHOW_SEQUENCE": "Memorize the sequence! Watch the flashing border colors.",
-            "WAIT_INPUT": f"Touch matching areas with correct hand! ({self.current_sequence_index + 1}/{len(self.sequence)})",
+            "WAIT_INPUT": f"Hold hand over correct areas for 1.5s to select! ({self.current_sequence_index + 1}/{len(self.sequence)})",
             "SUCCESS": "Success! Next level...",
             "FAILURE": "Game Over! Restarting..."
         }.get(self.game_state, "")
@@ -762,6 +848,7 @@ class MemoryGame:
         # Show cooldown indicator if active
         if self.game_state == "WAIT_INPUT":
             self._draw_interaction_cooldown(frame, current_time)
+            self._draw_selection_progress_indicator(frame, current_time)
 
         # Note: Sequence reminder removed to maintain game difficulty - players must remember the sequence
 
@@ -793,6 +880,52 @@ class MemoryGame:
             # Orange text for cooldown
             cv2.putText(frame, cooldown_text, (text_x, text_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
+
+    def _draw_selection_progress_indicator(self, frame: np.ndarray, current_time: float) -> None:
+        """Draw progress indicator for any area currently being selected."""
+        if not self.area_selection_progress:
+            return
+
+        h, w = frame.shape[:2]
+
+        for area_idx, progress_info in self.area_selection_progress.items():
+            if area_idx < len(self.game_areas):
+                area_x, area_y, area_w, area_h = self.game_areas[area_idx]
+
+                # Calculate progress
+                time_elapsed = current_time - progress_info['start_time']
+                progress = min(
+                    time_elapsed / self.selection_time_threshold, 1.0)
+
+                # Draw progress bar above the area
+                bar_width = area_w - 20
+                bar_height = 8
+                bar_x = area_x + 10
+                bar_y = area_y - 20
+
+                # Background of progress bar
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                              bar_width, bar_y + bar_height), (0, 0, 0), -1)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                              bar_width, bar_y + bar_height), (255, 255, 255), 1)
+
+                # Progress fill
+                progress_width = int(bar_width * progress)
+                if progress_width > 0:
+                    # Color changes from yellow to green as it progresses
+                    color = (0, int(255 * progress), int(255 *
+                             (1 - progress)))  # Yellow to green
+                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                                  progress_width, bar_y + bar_height), color, -1)
+
+                # Show percentage text
+                percentage_text = f"{int(progress * 100)}%"
+                text_size = cv2.getTextSize(
+                    percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                text_x = bar_x + (bar_width - text_size[0]) // 2
+                text_y = bar_y - 5
+                cv2.putText(frame, percentage_text, (text_x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
     def cleanup(self) -> None:
         """Release resources."""
