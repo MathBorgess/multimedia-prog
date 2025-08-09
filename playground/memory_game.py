@@ -659,41 +659,47 @@ class MemoryGame:
         """Draw progress indicator for any area currently being selected."""
         if not self.area_selection_progress:
             return
-            
+
         h, w = frame.shape[:2]
-        
+
         for area_idx, progress_info in self.area_selection_progress.items():
             if area_idx < len(self.game_areas):
                 area_x, area_y, area_w, area_h = self.game_areas[area_idx]
-                
+
                 # Calculate progress
                 time_elapsed = current_time - progress_info['start_time']
-                progress = min(time_elapsed / self.selection_time_threshold, 1.0)
-                
+                progress = min(
+                    time_elapsed / self.selection_time_threshold, 1.0)
+
                 # Draw progress bar above the area
                 bar_width = area_w - 20
                 bar_height = 8
                 bar_x = area_x + 10
                 bar_y = area_y - 20
-                
+
                 # Background of progress bar
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (0, 0, 0), -1)
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (255, 255, 255), 1)
-                
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                              bar_width, bar_y + bar_height), (0, 0, 0), -1)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                              bar_width, bar_y + bar_height), (255, 255, 255), 1)
+
                 # Progress fill
                 progress_width = int(bar_width * progress)
                 if progress_width > 0:
                     # Color changes from yellow to green as it progresses
-                    color = (0, int(255 * progress), int(255 * (1 - progress)))  # Yellow to green
-                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x + progress_width, bar_y + bar_height), color, -1)
-                
+                    color = (0, int(255 * progress), int(255 *
+                             (1 - progress)))  # Yellow to green
+                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
+                                  progress_width, bar_y + bar_height), color, -1)
+
                 # Show percentage text
                 percentage_text = f"{int(progress * 100)}%"
-                text_size = cv2.getTextSize(percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+                text_size = cv2.getTextSize(
+                    percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
                 text_x = bar_x + (bar_width - text_size[0]) // 2
                 text_y = bar_y - 5
                 cv2.putText(frame, percentage_text, (text_x, text_y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
     def _draw_countdown_notification(self, frame: np.ndarray) -> None:
         """Draw countdown notification for next session."""
@@ -914,14 +920,23 @@ class MemoryGame:
                 if self.game_state == "WAIT_INPUT":
                     # Always update hover effects for visual feedback
                     self._check_area_interaction((x, y), hand_label)
-                    
+
                     # Check for timed selection (only if cooldown has passed)
                     if current_time - self.last_interaction_time > self.interaction_cooldown:
-                        area_idx = self._check_timed_area_selection((x, y), hand_label, current_time)
+                        area_idx = self._check_timed_area_selection(
+                            (x, y), hand_label, current_time)
                         if area_idx is not None:
                             # Check if this is the correct color in sequence
                             expected_color = self.sequence[self.current_sequence_index]
                             actual_color = self.area_colors[area_idx]
+
+                            # Debug logging
+                            expected_color_name = self._get_color_name(
+                                expected_color)
+                            actual_color_name = self._get_color_name(
+                                actual_color)
+                            logger.info(
+                                f"Selection attempt: Position {self.current_sequence_index + 1}/{len(self.sequence)}, Expected: {expected_color_name}, Got: {actual_color_name}")
 
                             # Update interaction tracking
                             self.last_interaction_time = current_time
@@ -945,10 +960,8 @@ class MemoryGame:
                             else:
                                 # Wrong selection
                                 self.error_type = "wrong_color"
-                                expected_color_name = self._get_color_name(expected_color)
-                                actual_color_name = self._get_color_name(actual_color)
-                                self.error_message = f"Wrong Color! Expected {expected_color_name}, got {actual_color_name}"
-                                
+                                self.error_message = f"Wrong Color! Expected {expected_color_name}, got {actual_color_name} (Position {self.current_sequence_index + 1})"
+
                                 self.game_state = "FAILURE"
 
                                 # Add visual feedback for wrong selection
@@ -967,7 +980,8 @@ class MemoryGame:
 
         # Reset last touched area if no hand is currently touching any area
         if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
-            self.last_touched_area = -1        # Reset last touched area if no hand is currently touching any area
+            # Reset last touched area if no hand is currently touching any area
+            self.last_touched_area = -1
         if not any_hand_touching_areas and current_time - self.last_interaction_time > 0.5:
             self.last_touched_area = -1
 
@@ -989,6 +1003,9 @@ class MemoryGame:
 
         elif self.game_state in ["WAIT_INPUT", "SUCCESS", "FAILURE"]:
             self._draw_game_areas(frame)
+
+            # Draw selection progress indicators (progress bars above areas being selected)
+            self._draw_selection_progress_indicator(frame, current_time)
 
             # Draw success notification during input if user is making progress
             if self.game_state == "WAIT_INPUT" and self.current_sequence_index > 0:
