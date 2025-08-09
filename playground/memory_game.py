@@ -25,18 +25,24 @@ class MemoryGame:
         self.available_cameras = []
 
         # Game state
-        # INIT, SHOW_SEQUENCE, WAIT_INPUT, CHECKING, SUCCESS, FAILURE, COUNTDOWN
-        self.game_state = "INIT"
+        # START_SCREEN, INIT, SHOW_SEQUENCE, WAIT_INPUT, CHECKING, SUCCESS, FAILURE, COUNTDOWN
+        self.game_state = "START_SCREEN"
         self.sequence = []
         self.current_sequence_index = 0
         self.score = 0
         self.sequence_length = CONFIG['sequence_start_length']
         self.init_start_time = 0  # For initial instructions display
 
-        # Game areas (3x3 grid)
-        self.game_areas = []
+        # Start screen balloons for difficulty selection
+        # Will store (x, y, radius, time_limit, color)
+        self.difficulty_balloons = []
+        self.balloon_hover_effects = {}  # balloon_idx: start_time
+
+        # Game areas (circular areas randomly positioned)
+        self.game_areas = []  # Will store (x, y, radius) for circular areas
         self.area_colors = []
         self.area_hands = []  # Which hand should be used for each area
+        self.num_areas = 9  # Number of circular areas
 
         # Timing
         self.sequence_start_time = 0
@@ -77,6 +83,11 @@ class MemoryGame:
         # area_idx: {'start_time': time, 'hand_label': str}
         self.area_selection_progress = {}
 
+        # Selection time limit - user has limited time to make each selection
+        self.selection_time_limit = 3.0  # seconds per selection
+        self.selection_deadline = 0  # when current selection expires
+        self.show_deadline_warning = False
+
     def _check_camera_permissions(self) -> None:
         """Check camera permissions on macOS."""
         import platform
@@ -114,7 +125,152 @@ class MemoryGame:
         # Set initial timer for instructions display
         self.init_start_time = time.time()
 
-        self._start_new_game()
+        # Don't start game automatically - wait for difficulty selection
+        # self._start_new_game()
+
+    def _setup_difficulty_balloons(self, frame_width: int, frame_height: int) -> None:
+        """Setup the difficulty selection balloons on start screen."""
+        self.difficulty_balloons = []
+
+        # Balloon configurations: (time_limit, label, color)
+        balloon_configs = [
+            (7, "EASY\n7s", (0, 255, 0)),      # Green - 7 seconds
+            (5, "MEDIUM\n5s", (0, 165, 255)),  # Orange - 5 seconds
+            (2, "HARD\n2s", (0, 0, 255))       # Red - 2 seconds
+        ]
+
+        balloon_radius = 80
+        balloon_spacing = frame_width // 4
+        balloon_y = frame_height // 2
+
+        for i, (time_limit, label, color) in enumerate(balloon_configs):
+            balloon_x = balloon_spacing * (i + 1)
+            self.difficulty_balloons.append(
+                (balloon_x, balloon_y, balloon_radius, time_limit, label, color))
+
+        logger.info(
+            f"Created {len(self.difficulty_balloons)} difficulty balloons")
+
+    def _draw_start_screen(self, frame: np.ndarray, current_time: float) -> None:
+        """Draw the start screen with difficulty selection balloons."""
+        h, w = frame.shape[:2]
+
+        # Setup balloons if not done yet
+        if not self.difficulty_balloons:
+            self._setup_difficulty_balloons(w, h)
+
+        # Semi-transparent background
+        overlay = np.zeros_like(frame)
+        overlay[:, :] = (20, 20, 20)  # Dark background
+        alpha = 0.8
+        cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0, frame)
+
+        # Title
+        title_text = "MEMORY & COORDINATION GAME"
+        title_size = cv2.getTextSize(
+            title_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+        title_x = (w - title_size[0]) // 2
+        title_y = 80
+
+        cv2.putText(frame, title_text, (title_x, title_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
+
+        # Instructions
+        instruction_text = "Select Difficulty - Touch a balloon with correct hand"
+        inst_size = cv2.getTextSize(
+            instruction_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        inst_x = (w - inst_size[0]) // 2
+        inst_y = title_y + 60
+
+        cv2.putText(frame, instruction_text, (inst_x, inst_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # Draw balloons
+        for i, (balloon_x, balloon_y, radius, time_limit, label, color) in enumerate(self.difficulty_balloons):
+            # Check for hover effect
+            current_color = color
+            current_radius = radius
+
+            if i in self.balloon_hover_effects:
+                hover_duration = current_time - self.balloon_hover_effects[i]
+                if hover_duration < 0.5:
+                    # Pulsing effect
+                    pulse = 1.0 + 0.3 * abs(np.sin(hover_duration * 10))
+                    current_radius = int(radius * pulse)
+                    current_color = tuple(min(255, int(c * 1.2))
+                                          for c in color)
+                else:
+                    del self.balloon_hover_effects[i]
+
+            # Draw balloon (circle)
+            cv2.circle(frame, (balloon_x, balloon_y),
+                       current_radius, current_color, -1)
+            cv2.circle(frame, (balloon_x, balloon_y),
+                       current_radius, (255, 255, 255), 3)
+
+            # Draw balloon string
+            string_start_y = balloon_y + current_radius
+            string_end_y = string_start_y + 30
+            cv2.line(frame, (balloon_x, string_start_y),
+                     (balloon_x, string_end_y), (100, 100, 100), 2)
+
+            # Draw label on balloon
+            lines = label.split('\n')
+            total_height = len(lines) * 25
+            start_y = balloon_y - total_height // 2
+
+            for j, line in enumerate(lines):
+                text_size = cv2.getTextSize(
+                    line, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+                text_x = balloon_x - text_size[0] // 2
+                text_y = start_y + j * 25 + text_size[1]
+
+                # Text with outline
+                cv2.putText(frame, line, (text_x, text_y),
+                            # Black outline
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
+                cv2.putText(frame, line, (text_x, text_y),
+                            # White text
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+            # Draw hand indicator
+            # Left for easy, Right for hard, both for medium
+            hand_text = "L" if i == 0 else ("R" if i == 2 else "L/R")
+            hand_size = cv2.getTextSize(
+                hand_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+            hand_x = balloon_x - hand_size[0] // 2
+            hand_y = string_end_y + 25
+
+            cv2.putText(frame, hand_text, (hand_x, hand_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+    def _check_balloon_selection(self, hand_pos: Tuple[int, int], hand_label: str, current_time: float) -> Optional[int]:
+        """Check if hand is touching a difficulty balloon."""
+        if not self.difficulty_balloons:
+            return None
+
+        x, y = hand_pos
+
+        for i, (balloon_x, balloon_y, radius, time_limit, label, color) in enumerate(self.difficulty_balloons):
+            distance = ((x - balloon_x) ** 2 + (y - balloon_y) ** 2) ** 0.5
+
+            if distance <= radius:
+                # Add hover effect
+                if i not in self.balloon_hover_effects:
+                    self.balloon_hover_effects[i] = current_time
+
+                # Check correct hand for balloon
+                required_hand = None
+                if i == 0:  # Easy - Left hand
+                    required_hand = "Left"
+                elif i == 2:  # Hard - Right hand
+                    required_hand = "Right"
+                # Medium (i == 1) accepts both hands
+
+                if required_hand is None or hand_label == required_hand:
+                    return i
+
+        return None
 
     def _load_sounds(self) -> None:
         """Load sound files."""
@@ -214,16 +370,86 @@ class MemoryGame:
         pass
 
     def _calculate_game_areas(self, frame_width: int, frame_height: int) -> None:
-        """Calculate the 3x3 grid areas based on frame dimensions."""
+        """Calculate circular areas randomly positioned around the screen with max 60% overlap."""
         self.game_areas = []
-        area_width = frame_width // 3
-        area_height = frame_height // 3
 
-        for row in range(3):
-            for col in range(3):
-                x = col * area_width
-                y = row * area_height
-                self.game_areas.append((x, y, area_width, area_height))
+        # Area parameters
+        min_radius = 50
+        max_radius = 80
+        margin = 100  # Margin from screen edges
+        max_overlap_percentage = 0.6  # Maximum 60% overlap allowed
+
+        # Generate random positions for circular areas
+        attempts = 0
+        max_attempts = 2000
+
+        while len(self.game_areas) < self.num_areas and attempts < max_attempts:
+            attempts += 1
+
+            # Random position within screen bounds (considering margin)
+            x = random.randint(margin, frame_width - margin)
+            y = random.randint(margin, frame_height - margin)
+            radius = random.randint(min_radius, max_radius)
+
+            # Check overlap with existing areas
+            valid_position = True
+            for existing_x, existing_y, existing_radius in self.game_areas:
+                distance = ((x - existing_x) ** 2 +
+                            (y - existing_y) ** 2) ** 0.5
+
+                # Calculate maximum allowed overlap area
+                area1 = np.pi * radius ** 2
+                area2 = np.pi * existing_radius ** 2
+                smaller_area = min(area1, area2)
+                max_overlap_area = smaller_area * max_overlap_percentage
+
+                # Calculate actual overlap area using intersection of circles formula
+                if distance < (radius + existing_radius):
+                    if distance <= abs(radius - existing_radius):
+                        # One circle is completely inside the other
+                        overlap_area = smaller_area
+                    else:
+                        # Partial overlap - use circle intersection formula
+                        r1, r2 = radius, existing_radius
+                        d = distance
+
+                        # Calculate intersection area
+                        part1 = r1**2 * \
+                            np.arccos((d**2 + r1**2 - r2**2) / (2 * d * r1))
+                        part2 = r2**2 * \
+                            np.arccos((d**2 + r2**2 - r1**2) / (2 * d * r2))
+                        part3 = 0.5 * \
+                            np.sqrt((-d + r1 + r2) * (d + r1 - r2)
+                                    * (d - r1 + r2) * (d + r1 + r2))
+                        overlap_area = part1 + part2 - part3
+
+                    # Check if overlap exceeds maximum allowed
+                    if overlap_area > max_overlap_area:
+                        valid_position = False
+                        break
+
+            if valid_position:
+                self.game_areas.append((x, y, radius))
+
+        # If we couldn't place all areas, fill remaining with fallback positions
+        if len(self.game_areas) < self.num_areas:
+            logger.warning(
+                f"Could only place {len(self.game_areas)}/{self.num_areas} areas with overlap constraint")
+            # Use a simple grid fallback for remaining areas
+            grid_size = 3
+            area_spacing_x = frame_width // (grid_size + 1)
+            area_spacing_y = frame_height // (grid_size + 1)
+
+            for i in range(len(self.game_areas), self.num_areas):
+                row = (i - len(self.game_areas)) // grid_size
+                col = (i - len(self.game_areas)) % grid_size
+                x = area_spacing_x * (col + 1)
+                y = area_spacing_y * (row + 1)
+                radius = 60
+                self.game_areas.append((x, y, radius))
+
+        logger.info(
+            f"Generated {len(self.game_areas)} circular game areas with max 60% overlap")
 
     def _start_new_game(self) -> None:
         """Start a new game round."""
@@ -244,12 +470,19 @@ class MemoryGame:
         self.error_type = "general"
         self.countdown_start_time = 0
 
+        # Reset selection timing
+        self.selection_deadline = 0
+        self.show_deadline_warning = False
+
         # Generate random sequence
         for _ in range(self.sequence_length):
             self.sequence.append(random.randint(0, len(self.colors) - 1))
 
         # Setup random colors and hands for areas
         self._setup_random_areas()
+
+        # Force recalculation of areas for new layout
+        self.game_areas = []
 
         logger.info(
             f"Starting new game - Sequence length: {self.sequence_length}")
@@ -266,14 +499,14 @@ class MemoryGame:
         return f"Color {color_index}"
 
     def _setup_random_areas(self) -> None:
-        """Setup colors and hand indicators for the 9 areas, ensuring sequence colors are available."""
+        """Setup colors and hand indicators for the circular areas, ensuring sequence colors are available."""
         self.area_colors = []
         self.area_hands = []
 
         # First, ensure all colors from the sequence are represented in the areas
         # Get unique colors from sequence
         sequence_colors = list(set(self.sequence))
-        available_positions = list(range(9))
+        available_positions = list(range(self.num_areas))
 
         # Place sequence colors in random positions
         for color_idx in sequence_colors:
@@ -293,14 +526,14 @@ class MemoryGame:
             self.area_colors[pos] = color_idx
 
         # Fill any gaps with random colors
-        for i in range(9):
+        for i in range(self.num_areas):
             if i >= len(self.area_colors) or self.area_colors[i] == -1:
                 while len(self.area_colors) <= i:
                     self.area_colors.append(-1)
                 self.area_colors[i] = random.randint(0, len(self.colors) - 1)
 
-        # Setup hand indicators for all 9 areas
-        for _ in range(9):
+        # Setup hand indicators for all areas
+        for _ in range(self.num_areas):
             # Random hand (0 = left, 1 = right)
             hand = random.randint(0, 1)
             self.area_hands.append(hand)
@@ -364,7 +597,7 @@ class MemoryGame:
                       (255, 255, 255), 2)
 
     def _draw_game_areas(self, frame: np.ndarray) -> None:
-        """Draw the 3x3 grid with semi-transparent colors, hand indicators, and visual feedback."""
+        """Draw the circular areas with semi-transparent colors, hand indicators, and visual feedback."""
         if not self.game_areas:
             return
 
@@ -373,7 +606,7 @@ class MemoryGame:
         # Create overlay for transparency
         overlay = frame.copy()
 
-        for i, (x, y, w, h) in enumerate(self.game_areas):
+        for i, (center_x, center_y, radius) in enumerate(self.game_areas):
             # Base color
             color = self.colors[self.area_colors[i]]
             base_alpha = CONFIG['area_transparency']
@@ -386,8 +619,8 @@ class MemoryGame:
                     glow_alpha = 0.3 * (1 - hover_duration / 0.3)  # Fade out
                     glow_color = tuple(min(255, c + 100)
                                        for c in color)  # Brighter color
-                    cv2.rectangle(overlay, (x-5, y-5),
-                                  (x + w + 5, y + h + 5), glow_color, -1)
+                    cv2.circle(overlay, (center_x, center_y),
+                               radius + 8, glow_color, -1)
                     base_alpha = min(0.8, base_alpha + glow_alpha)
                 else:
                     # Remove expired hover
@@ -420,9 +653,8 @@ class MemoryGame:
 
                 # Add a white border that gets thicker as selection progresses
                 border_thickness = int(3 + selection_progress * 5)
-                cv2.rectangle(overlay, (x-border_thickness, y-border_thickness),
-                              (x + w + border_thickness, y + h + border_thickness),
-                              (255, 255, 255), border_thickness)
+                cv2.circle(overlay, (center_x, center_y), radius +
+                           border_thickness, (255, 255, 255), border_thickness)
 
             # Check for selection feedback
             if i in self.selected_areas:
@@ -439,8 +671,8 @@ class MemoryGame:
                             abs(np.sin(selection_duration * 10))
                         glow_color = tuple(
                             int(c * pulse + success_color[j] * (1-pulse)) for j, c in enumerate(color))
-                        cv2.rectangle(overlay, (x-8, y-8),
-                                      (x + w + 8, y + h + 8), glow_color, -1)
+                        cv2.circle(overlay, (center_x, center_y),
+                                   radius + 12, glow_color, -1)
                         base_alpha = 0.9
                     else:  # wrong
                         # Red error flash
@@ -451,21 +683,21 @@ class MemoryGame:
                             abs(np.sin(selection_duration * 20))
                         flash_color = tuple(
                             int(error_color[j] * flash + c * (1-flash)) for j, c in enumerate(color))
-                        cv2.rectangle(overlay, (x-8, y-8),
-                                      (x + w + 8, y + h + 8), flash_color, -1)
+                        cv2.circle(overlay, (center_x, center_y),
+                                   radius + 12, flash_color, -1)
                         base_alpha = 0.9
                 else:
                     # Remove expired selection
                     del self.selected_areas[i]
 
-            # Draw area with color on overlay
-            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
+            # Draw circle with color on overlay
+            cv2.circle(overlay, (center_x, center_y), radius, color, -1)
 
         # Blend overlay with original frame for transparency
         cv2.addWeighted(overlay, base_alpha, frame, 1 - base_alpha, 0, frame)
 
         # Draw borders and hand indicators on top
-        for i, (x, y, w, h) in enumerate(self.game_areas):
+        for i, (center_x, center_y, radius) in enumerate(self.game_areas):
             # Draw border with dynamic thickness based on feedback
             border_thickness = 3
             border_color = (255, 255, 255)
@@ -482,15 +714,15 @@ class MemoryGame:
                 else:
                     border_color = (255, 255, 0)  # Yellow border for hover
 
-            cv2.rectangle(frame, (x, y), (x + w, y + h),
-                          border_color, border_thickness)
+            cv2.circle(frame, (center_x, center_y), radius,
+                       border_color, border_thickness)
 
             # Draw hand indicator with better visibility
             hand_text = "L" if self.area_hands[i] == 0 else "R"
             text_size = cv2.getTextSize(
                 hand_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
-            text_x = x + (w - text_size[0]) // 2
-            text_y = y + (h + text_size[1]) // 2
+            text_x = center_x - text_size[0] // 2
+            text_y = center_y + text_size[1] // 2
 
             # Draw text with outline for better visibility
             cv2.putText(frame, hand_text, (text_x, text_y),
@@ -504,18 +736,19 @@ class MemoryGame:
             number_text = str(i)
             number_size = cv2.getTextSize(
                 number_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
-            cv2.putText(frame, number_text, (x + 5, y + 20),
+            cv2.putText(frame, number_text, (center_x - 10, center_y - radius + 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     def _check_area_interaction(self, hand_pos: Tuple[int, int], hand_label: str) -> Optional[int]:
-        """Check if hand position is touching any area and return area index."""
+        """Check if hand position is touching any circular area and return area index."""
         x, y = hand_pos
         current_time = time.time()
 
-        for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
-            if (area_x <= x <= area_x + area_w and
-                    area_y <= y <= area_y + area_h):
+        for i, (center_x, center_y, radius) in enumerate(self.game_areas):
+            # Calculate distance from hand to circle center
+            distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
 
+            if distance <= radius:
                 # Add hover effect for visual feedback
                 if i not in self.hover_areas:
                     self.hover_areas[i] = current_time
@@ -529,25 +762,26 @@ class MemoryGame:
                     return i
 
     def _check_area_touched(self, hand_pos: Tuple[int, int]) -> Optional[int]:
-        """Check if hand position is touching any area regardless of hand type."""
+        """Check if hand position is touching any circular area regardless of hand type."""
         x, y = hand_pos
 
-        for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
-            if (area_x <= x <= area_x + area_w and
-                    area_y <= y <= area_y + area_h):
+        for i, (center_x, center_y, radius) in enumerate(self.game_areas):
+            # Calculate distance from hand to circle center
+            distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
+            if distance <= radius:
                 return i
         return None
 
-        return None
-
     def _check_timed_area_selection(self, hand_pos: Tuple[int, int], hand_label: str, current_time: float) -> Optional[int]:
-        """Check for timed selection - hand must stay over area for a duration to select it."""
+        """Check for timed selection - hand must stay over circular area for a duration to select it."""
         x, y = hand_pos
 
         # Check which area the hand is currently over
         current_area = None
-        for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
-            if (area_x <= x <= area_x + area_w and area_y <= y <= area_y + area_h):
+        for i, (center_x, center_y, radius) in enumerate(self.game_areas):
+            # Calculate distance from hand to circle center
+            distance = ((x - center_x) ** 2 + (y - center_y) ** 2) ** 0.5
+            if distance <= radius:
                 expected_hand = "Left" if self.area_hands[i] == 0 else "Right"
                 if hand_label == expected_hand:
                     current_area = i
@@ -655,8 +889,73 @@ class MemoryGame:
                 cv2.putText(frame, line, (text_x, text_y),
                             cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
 
+    def _draw_selection_timer(self, frame: np.ndarray, current_time: float) -> None:
+        """Draw the selection timer when waiting for input."""
+        if self.game_state != "WAIT_INPUT" or self.selection_deadline == 0:
+            return
+
+        remaining_time = max(0, self.selection_deadline - current_time)
+        h, w = frame.shape[:2]
+
+        # Timer position (top center)
+        timer_x = w // 2
+        timer_y = 120
+
+        # Timer circle background
+        circle_radius = 40
+        circle_color = (100, 100, 100)  # Gray background
+
+        # Warning color when time is running out
+        if remaining_time <= 1.0:
+            # Pulsing red when less than 1 second
+            pulse = 0.5 + 0.5 * abs(np.sin(current_time * 8))
+            circle_color = (0, 0, int(255 * pulse))
+        elif remaining_time <= 2.0:
+            # Orange when less than 2 seconds
+            circle_color = (0, 165, 255)
+
+        # Draw circle background
+        cv2.circle(frame, (timer_x, timer_y), circle_radius, circle_color, -1)
+        cv2.circle(frame, (timer_x, timer_y),
+                   circle_radius, (255, 255, 255), 3)
+
+        # Draw timer arc showing remaining time
+        if remaining_time > 0:
+            progress = remaining_time / self.selection_time_limit
+            start_angle = -90  # Start from top
+            end_angle = start_angle + (360 * progress)  # Progress clockwise
+
+            arc_color = (0, 255, 0)  # Green
+            if remaining_time <= 1.0:
+                arc_color = (0, 0, 255)  # Red
+            elif remaining_time <= 2.0:
+                arc_color = (0, 165, 255)  # Orange
+
+            cv2.ellipse(frame, (timer_x, timer_y), (circle_radius - 5, circle_radius - 5),
+                        0, start_angle, end_angle, arc_color, 6)
+
+        # Timer text
+        timer_text = f"{remaining_time:.1f}s"
+        text_size = cv2.getTextSize(
+            timer_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
+        text_x = timer_x - text_size[0] // 2
+        text_y = timer_y + text_size[1] // 2
+
+        cv2.putText(frame, timer_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # "Select Color" instruction
+        instruction_text = f"Select Next Color ({self.current_sequence_index + 1}/{len(self.sequence)})"
+        inst_size = cv2.getTextSize(
+            instruction_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        inst_x = timer_x - inst_size[0] // 2
+        inst_y = timer_y + circle_radius + 30
+
+        cv2.putText(frame, instruction_text, (inst_x, inst_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
     def _draw_selection_progress_indicator(self, frame: np.ndarray, current_time: float) -> None:
-        """Draw progress indicator for any area currently being selected."""
+        """Draw progress indicator for any circular area currently being selected."""
         if not self.area_selection_progress:
             return
 
@@ -664,42 +963,42 @@ class MemoryGame:
 
         for area_idx, progress_info in self.area_selection_progress.items():
             if area_idx < len(self.game_areas):
-                area_x, area_y, area_w, area_h = self.game_areas[area_idx]
+                center_x, center_y, radius = self.game_areas[area_idx]
 
                 # Calculate progress
                 time_elapsed = current_time - progress_info['start_time']
                 progress = min(
                     time_elapsed / self.selection_time_threshold, 1.0)
 
-                # Draw progress bar above the area
-                bar_width = area_w - 20
-                bar_height = 8
-                bar_x = area_x + 10
-                bar_y = area_y - 20
+                # Draw progress arc around the circle
+                start_angle = -90  # Start from top
+                end_angle = start_angle + \
+                    (360 * progress)  # Progress clockwise
 
-                # Background of progress bar
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                              bar_width, bar_y + bar_height), (0, 0, 0), -1)
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                              bar_width, bar_y + bar_height), (255, 255, 255), 1)
+                # Draw background arc (full circle)
+                cv2.ellipse(frame, (center_x, center_y), (radius + 15, radius + 15),
+                            0, 0, 360, (50, 50, 50), 8)
 
-                # Progress fill
-                progress_width = int(bar_width * progress)
-                if progress_width > 0:
+                # Draw progress arc
+                if progress > 0:
                     # Color changes from yellow to green as it progresses
                     color = (0, int(255 * progress), int(255 *
                              (1 - progress)))  # Yellow to green
-                    cv2.rectangle(frame, (bar_x, bar_y), (bar_x +
-                                  progress_width, bar_y + bar_height), color, -1)
+                    cv2.ellipse(frame, (center_x, center_y), (radius + 15, radius + 15),
+                                0, start_angle, end_angle, color, 8)
 
                 # Show percentage text
                 percentage_text = f"{int(progress * 100)}%"
                 text_size = cv2.getTextSize(
-                    percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
-                text_x = bar_x + (bar_width - text_size[0]) // 2
-                text_y = bar_y - 5
+                    percentage_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                text_x = center_x - text_size[0] // 2
+                text_y = center_y - radius - 30
+
+                # Background for text
+                cv2.rectangle(frame, (text_x - 5, text_y - text_size[1] - 5),
+                              (text_x + text_size[0] + 5, text_y + 5), (0, 0, 0), -1)
                 cv2.putText(frame, percentage_text, (text_x, text_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     def _draw_countdown_notification(self, frame: np.ndarray) -> None:
         """Draw countdown notification for next session."""
@@ -816,9 +1115,9 @@ class MemoryGame:
         """Process the main game logic based on current state."""
         if self.game_state == "INIT":
             # Show instructions for a few seconds before starting
-            if current_time - self.init_start_time > 3.0:  # 3 seconds of instructions
-                self.game_state = "SHOW_SEQUENCE"
-                self.sequence_start_time = current_time
+            if current_time - self.init_start_time > 2.0:  # 2 seconds of instructions
+                # Start the actual game
+                self._start_new_game()
 
         elif self.game_state == "SHOW_SEQUENCE":
             elapsed = current_time - self.sequence_start_time
@@ -841,6 +1140,26 @@ class MemoryGame:
 
         elif self.game_state == "WAIT_INPUT":
             # Waiting for user to complete the sequence
+            # Set deadline when entering input phase for the first time
+            if self.selection_deadline == 0:
+                self.selection_deadline = current_time + self.selection_time_limit
+                logger.info(
+                    f"Selection deadline set: {self.selection_time_limit}s from now")
+
+            # Check if time limit exceeded
+            remaining_time = self.selection_deadline - current_time
+            if remaining_time <= 0:
+                # Time's up!
+                self.error_type = "timeout"
+                self.error_message = f"Time's Up! You had {self.selection_time_limit}s to select"
+                self.game_state = "FAILURE"
+                self.error_flash_start = current_time
+                self._play_sound('error')
+                logger.info("Selection timeout - game over")
+            elif remaining_time <= 1.0:
+                # Show warning when less than 1 second remains
+                self.show_deadline_warning = True
+
             if self.current_sequence_index >= len(self.sequence):
                 self.game_state = "SUCCESS"
 
@@ -910,11 +1229,30 @@ class MemoryGame:
                 self.mp_draw.draw_landmarks(
                     frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
-                # Check if hand is currently touching any area
-                for i, (area_x, area_y, area_w, area_h) in enumerate(self.game_areas):
-                    if (area_x <= x <= area_x + area_w and area_y <= y <= area_y + area_h):
-                        any_hand_touching_areas = True
-                        break
+                # Handle start screen balloon selection
+                if self.game_state == "START_SCREEN":
+                    balloon_idx = self._check_balloon_selection(
+                        (x, y), hand_label, current_time)
+                    if balloon_idx is not None:
+                        # Get selected time limit
+                        _, _, _, time_limit, _, _ = self.difficulty_balloons[balloon_idx]
+                        self.selection_time_limit = time_limit
+                        logger.info(
+                            f"Difficulty selected: {time_limit}s per selection")
+
+                        # Start the game
+                        self.game_state = "INIT"
+                        self.init_start_time = current_time
+                        self._play_sound('sequence')
+
+                # Check if hand is currently touching any area (only during game)
+                if self.game_state in ["WAIT_INPUT", "SUCCESS", "FAILURE"]:
+                    for i, (center_x, center_y, radius) in enumerate(self.game_areas):
+                        distance = ((x - center_x) ** 2 +
+                                    (y - center_y) ** 2) ** 0.5
+                        if distance <= radius:
+                            any_hand_touching_areas = True
+                            break
 
                 # Check for area interactions during input phase
                 if self.game_state == "WAIT_INPUT":
@@ -945,6 +1283,17 @@ class MemoryGame:
                             if expected_color == actual_color:
                                 # Correct selection
                                 self.current_sequence_index += 1
+
+                                # Reset selection deadline for next selection
+                                if self.current_sequence_index < len(self.sequence):
+                                    self.selection_deadline = current_time + self.selection_time_limit
+                                    self.show_deadline_warning = False
+                                    logger.info(
+                                        f"Correct selection! Deadline reset for next selection")
+                                else:
+                                    # Sequence complete, no more deadline
+                                    self.selection_deadline = 0
+                                    self.show_deadline_warning = False
 
                                 # Add visual feedback for correct selection
                                 self.selected_areas[area_idx] = {
@@ -986,7 +1335,10 @@ class MemoryGame:
             self.last_touched_area = -1
 
         # Draw game elements based on state
-        if self.game_state == "SHOW_SEQUENCE":
+        if self.game_state == "START_SCREEN":
+            self._draw_start_screen(frame, current_time)
+
+        elif self.game_state == "SHOW_SEQUENCE":
             elapsed = current_time - self.sequence_start_time
             color_duration = CONFIG['border_flash_duration'] + \
                 CONFIG['color_pause_duration']
@@ -1003,6 +1355,9 @@ class MemoryGame:
 
         elif self.game_state in ["WAIT_INPUT", "SUCCESS", "FAILURE"]:
             self._draw_game_areas(frame)
+
+            # Draw selection timer during input phase
+            self._draw_selection_timer(frame, current_time)
 
             # Draw selection progress indicators (progress bars above areas being selected)
             self._draw_selection_progress_indicator(frame, current_time)
@@ -1045,14 +1400,20 @@ class MemoryGame:
             logger.info("Manual restart requested by user.")
             self.score = 0
             self.sequence_length = CONFIG['sequence_start_length']
-            self._start_new_game()
+            # Return to start screen for difficulty selection
+            self.game_state = "START_SCREEN"
+            self.difficulty_balloons = []
+            self.balloon_hover_effects = {}
         elif key == ord('s'):
             # Skip countdown with 's' key
             if self.game_state == "COUNTDOWN":
                 logger.info("Countdown skipped by user.")
                 self.score = 0
                 self.sequence_length = CONFIG['sequence_start_length']
-                self._start_new_game()
+                # Return to start screen for difficulty selection
+                self.game_state = "START_SCREEN"
+                self.difficulty_balloons = []
+                self.balloon_hover_effects = {}
 
     def _draw_ui(self, frame: np.ndarray, current_time: float) -> None:
         """Draw game UI elements."""
@@ -1079,9 +1440,9 @@ class MemoryGame:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # Instructions for new players (show only during INIT state)
-        if self.game_state == "INIT" and self.score == 0:
+        if self.game_state == "INIT":
             instructions = [
-                "MEMORY & COORDINATION GAME",
+                f"Starting game with {self.selection_time_limit}s per selection",
                 "1. Watch the sequence of colors",
                 "2. Touch areas with the correct hand (L/R shown)",
                 "3. Follow the sequence in order",
