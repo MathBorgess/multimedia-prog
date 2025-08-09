@@ -292,33 +292,7 @@ class MemoryGame:
             cv2.rectangle(frame, (0, 0), (thickness, h), color, -1)  # Left
             cv2.rectangle(frame, (w-thickness, 0), (w, h), color, -1)  # Right
 
-        # Highlight areas that match the current sequence color
-        self._highlight_matching_areas(frame, color_index, elapsed_time)
-
-    def _highlight_matching_areas(self, frame: np.ndarray, color_index: int, elapsed_time: float) -> None:
-        """Highlight areas that match the current sequence color during sequence display."""
-        if not self.game_areas:
-            return
-
-        flash_cycle = 0.4  # seconds for area highlighting
-        show_highlight = (elapsed_time % (flash_cycle * 2)) < flash_cycle
-
-        if show_highlight:
-            # Find areas with matching color
-            for i, (x, y, w, h) in enumerate(self.game_areas):
-                if i < len(self.area_colors) and self.area_colors[i] == color_index:
-                    # Create a bright outline around matching areas
-                    highlight_color = (255, 255, 255)  # White highlight
-                    thickness = 8
-                    cv2.rectangle(frame, (x-thickness//2, y-thickness//2),
-                                  (x + w + thickness//2, y + h + thickness//2),
-                                  highlight_color, thickness)
-
-                    # Add a subtle glow effect
-                    overlay = frame.copy()
-                    cv2.rectangle(overlay, (x, y), (x + w, y + h),
-                                  highlight_color, -1)
-                    cv2.addWeighted(frame, 0.9, overlay, 0.1, 0, frame)
+        # Note: Removed area highlighting to maintain game difficulty
 
     def _draw_sequence_progress(self, frame: np.ndarray, current_idx: int, total: int, current_color: int) -> None:
         """Draw sequence progress and current color indicator."""
@@ -785,57 +759,11 @@ class MemoryGame:
                                 (10, y_offset + i * 25),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
-        # Show current sequence during input phase
-        if self.game_state == "WAIT_INPUT" and self.sequence:
-            self._draw_sequence_reminder(frame)
-
         # Show cooldown indicator if active
         if self.game_state == "WAIT_INPUT":
             self._draw_interaction_cooldown(frame, current_time)
 
-    def _draw_sequence_reminder(self, frame: np.ndarray) -> None:
-        """Draw a small reminder of the sequence colors during input phase."""
-        if not self.sequence:
-            return
-
-        h, w = frame.shape[:2]
-
-        # Draw sequence colors as small rectangles
-        rect_size = 25
-        spacing = 5
-        start_x = w - (len(self.sequence) * (rect_size + spacing)) - 20
-        start_y = 20
-
-        # Background
-        bg_width = len(self.sequence) * (rect_size + spacing) + 10
-        cv2.rectangle(frame, (start_x - 10, start_y - 5),
-                      (start_x + bg_width, start_y + rect_size + 10),
-                      (0, 0, 0), -1)
-
-        # Draw each color in sequence
-        for i, color_idx in enumerate(self.sequence):
-            x = start_x + i * (rect_size + spacing)
-            y = start_y
-
-            color = self.colors[color_idx]
-
-            # Highlight current position in sequence
-            if i == self.current_sequence_index:
-                # Bright border for current position
-                cv2.rectangle(frame, (x - 3, y - 3),
-                              (x + rect_size + 3, y + rect_size + 3),
-                              (255, 255, 0), 3)  # Yellow highlight
-            elif i < self.current_sequence_index:
-                # Green border for completed positions
-                cv2.rectangle(frame, (x - 2, y - 2),
-                              (x + rect_size + 2, y + rect_size + 2),
-                              (0, 255, 0), 2)  # Green border
-
-            # Draw color rectangle
-            cv2.rectangle(frame, (x, y), (x + rect_size,
-                          y + rect_size), color, -1)
-            cv2.rectangle(frame, (x, y), (x + rect_size,
-                          y + rect_size), (255, 255, 255), 1)
+        # Note: Sequence reminder removed to maintain game difficulty - players must remember the sequence
 
     def _draw_interaction_cooldown(self, frame: np.ndarray, current_time: float) -> None:
         """Draw cooldown indicator when interaction is temporarily disabled."""
