@@ -5,7 +5,6 @@ CONFIG = {
     'color_pause_duration': 0.8,   # seconds between colors (slower)
     'success_pause_duration': 1.5,  # seconds after success
     # seconds after failure (deprecated, using countdown now)
-    'failure_pause_duration': 2.5,
     'countdown_duration': 5,        # seconds countdown before restart
 
     # Visual settings
@@ -45,16 +44,16 @@ CONFIG = {
     # Performance settings
     'fps': 60,
 
-    # Game colors (RGB) - semi-transparent versions will be calculated
+    # Game colors (BGR: OpenCV format) - semi-transparent versions will be calculated
     'game_colors': [
-        (255, 0, 0),    # Red
-        (0, 255, 0),    # Green
-        (0, 0, 255),    # Blue
-        (255, 255, 0),  # Yellow
-        (255, 0, 255),  # Magenta
-        (0, 255, 255),  # Cyan
-        (255, 165, 0),  # Orange
-        (128, 0, 128),  # Purple
-        (255, 192, 203)  # Pink
+        (0, 0, 255),    
+        (0, 255, 0),    
+        (255, 0, 0),    
+        (0, 255, 255),  
+        (255, 0, 255),  
+        (255, 255, 0),  
+        (0, 165, 255),  
+        (128, 0, 128),  
+        (203, 192, 255) 
     ]
 }

@@ -120,13 +120,9 @@ class MemoryGame:
 
         # Initialize camera
         self._init_camera_with_retry()
-        self._setup_game_areas()
 
         # Set initial timer for instructions display
         self.init_start_time = time.time()
-
-        # Don't start game automatically - wait for difficulty selection
-        # self._start_new_game()
 
     def _setup_difficulty_balloons(self, frame_width: int, frame_height: int) -> None:
         """Setup the difficulty selection balloons on start screen."""
@@ -314,9 +310,9 @@ class MemoryGame:
                         continue
 
                     # Set camera properties
-                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    self.cap.set(cv2.CAP_PROP_FPS, 30)
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, CONFIG['camera_width'])
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CONFIG['camera_height'])
+                    self.cap.set(cv2.CAP_PROP_FPS, CONFIG['camera_fps'])
 
                     # Test frame reading
                     ret, frame = self.cap.read()
@@ -363,11 +359,6 @@ class MemoryGame:
             logger.warning("No working cameras found!")
         else:
             logger.info(f"Total available cameras: {self.available_cameras}")
-
-    def _setup_game_areas(self) -> None:
-        """Setup the 3x3 grid of game areas."""
-        # These will be calculated based on frame dimensions in each frame
-        pass
 
     def _calculate_game_areas(self, frame_width: int, frame_height: int) -> None:
         """Calculate circular areas randomly positioned around the screen with max 60% overlap."""
@@ -831,7 +822,7 @@ class MemoryGame:
         h, w = frame.shape[:2]
 
         # Create pulsing red overlay
-        overlay = frame.copy()
+        # overlay = frame.copy()
 
         # Calculate flash intensity (fade out over time)
         intensity = max(0, 1 - error_duration / 2.0)
