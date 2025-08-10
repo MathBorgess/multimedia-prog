@@ -4,7 +4,6 @@ CONFIG = {
     'border_flash_duration': 1.0,  # seconds (slower)
     'color_pause_duration': 0.8,   # seconds between colors (slower)
     'success_pause_duration': 1.5,  # seconds after success
-    # seconds after failure (deprecated, using countdown now)
     'countdown_duration': 5,        # seconds countdown before restart
 
     # Visual settings
