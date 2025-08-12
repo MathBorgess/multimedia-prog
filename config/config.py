@@ -29,8 +29,8 @@ CONFIG = {
 
     # Camera settings
     'camera_index': 0,
-    'camera_width': 640,
-    'camera_height': 480,
+    'camera_width': 1120,
+    'camera_height': 630,
     'camera_fps': 30,
 
     # MediaPipe Hands configuration

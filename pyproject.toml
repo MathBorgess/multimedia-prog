@@ -1,5 +1,5 @@
 [project]
-name = "memory-coordination-game"
+name = "color-touch-game"
 version = "1.0.0"
 description = "Um webapp interativo que combina memória visual e coordenação motora usando visão computacional"
 readme = "README.md"

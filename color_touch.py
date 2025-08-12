@@ -13,8 +13,8 @@ from config.config import CONFIG
 logger = logging.getLogger(__name__)
 
 
-class MemoryGame:
-    """Main class for the memory and coordination game."""
+class ColorTouch:
+    """Main class for the color touch game."""
 
     def __init__(self):
         self.mp_hands = mp.solutions.hands
@@ -162,7 +162,7 @@ class MemoryGame:
         cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0, frame)
 
         # Title
-        title_text = "MEMORY & COORDINATION GAME"
+        title_text = "Color Touch"
         title_size = cv2.getTextSize(
             title_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
         title_x = (w - title_size[0]) // 2
@@ -1379,7 +1379,7 @@ class MemoryGame:
         # Process game logic
         self._process_game_logic(current_time)
 
-        cv2.imshow('Memory & Coordination Game', frame)
+        cv2.imshow('Color Touch', frame)
 
         # Check for quit
         key = cv2.waitKey(1) & 0xFF

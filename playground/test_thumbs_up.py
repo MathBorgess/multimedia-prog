@@ -7,7 +7,7 @@ This script shows the camera feed and detects thumbs up gestures.
 import cv2
 import mediapipe as mp
 import time
-from playground.memory_game import MemoryGame
+from color_touch import ColorTouch
 
 
 def test_thumbs_up():
@@ -28,8 +28,8 @@ def test_thumbs_up():
         print("Error: Could not open camera")
         return
 
-    # Create a memory game instance to use its gesture detection
-    game = MemoryGame()
+    # Create a color touch instance to use its gesture detection
+    game = ColorTouch()
 
     print("Testing thumbs up detection...")
     print("Show thumbs up gesture to the camera")

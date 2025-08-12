@@ -1,7 +1,7 @@
 import asyncio
 import platform
 import logging
-from playground.memory_game import MemoryGame
+from color_touch import ColorTouch
 from config.config import CONFIG
 
 # Configure logging
@@ -16,9 +16,9 @@ async def main():
     """Main async function for Pyodide compatibility."""
     app = None
     try:
-        app = MemoryGame()
+        app = ColorTouch()
         app.setup()
-        logger.info("Memory Game started successfully!")
+        logger.info("Color Touch started successfully!")
 
         while True:
             app.update_loop()
@@ -33,7 +33,7 @@ async def main():
         logger.error("Please check camera connection and try again")
         # Show user-friendly error message
         print("\n" + "="*50)
-        print("ERROR: Memory Game encountered an issue")
+        print("ERROR: Color Touch encountered an issue")
         print(f"Details: {e}")
         print("\nPossible solutions:")
         print("1. Check if your camera is connected and working")

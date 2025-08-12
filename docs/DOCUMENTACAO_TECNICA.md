@@ -32,7 +32,7 @@ multimedia-prog/
 │   ├── config.py          # Parâmetros centralizados do sistema
 │   └── __pycache__/       # Cache Python
 ├── playground/            # Módulos principais do jogo
-│   ├── memory_game.py     # Classe principal do jogo
+│   ├── color_touch.py     # Classe principal do jogo
 │   ├── virtual_drums.py   # Engine de áudio (legado)
 │   ├── drum_kit.py       # Componentes de áudio (legado)
 │   ├── drum.py           # Utilitários de áudio
@@ -59,7 +59,7 @@ multimedia-prog/
   - Tratamento de exceções globais
 
 
-#### 2. **Classe MemoryGame (`playground/memory_game.py`)**
+#### 2. **Classe ColorTouch (`color_touch.py`)**
 - **Função**: Core do sistema de jogo
 - **Responsabilidades**:
   - Gerenciamento de estados do jogo
@@ -277,7 +277,7 @@ class GameStateMachine:
 ```python
 import threading
 
-class MemoryGame:
+class ColorTouch:
     def __init__(self):
         self.state_lock = threading.Lock()
     
@@ -369,12 +369,12 @@ logging.basicConfig(
 
 ## 💻 Análise Detalhada do Código
 
-### 🔍 Estrutura da Classe Principal (MemoryGame)
+### 🔍 Estrutura da Classe Principal (ColorTouch)
 
-A classe `MemoryGame` é o núcleo do sistema e implementa o padrão State Machine:
+A classe `ColorTouch` é o núcleo do sistema e implementa o padrão State Machine:
 
 ```python
-class MemoryGame:
+class ColorTouch:
     def __init__(self):
         # Inicialização do MediaPipe
         self.mp_hands = mp.solutions.hands
