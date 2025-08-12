@@ -172,7 +172,7 @@ class ColorTouch:
                     cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
 
         # Instructions
-        instruction_text = "Select Difficulty - Touch a balloon with correct hand"
+        instruction_text = "Select Difficulty - Touch a balloon with your hand"
         inst_size = cv2.getTextSize(
             instruction_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
         inst_x = (w - inst_size[0]) // 2
@@ -228,17 +228,6 @@ class ColorTouch:
                 cv2.putText(frame, line, (text_x, text_y),
                             # White text
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-            # Draw hand indicator
-            # Left for easy, Right for hard, both for medium
-            hand_text = "L" if i == 0 else ("R" if i == 2 else "L/R")
-            hand_size = cv2.getTextSize(
-                hand_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-            hand_x = balloon_x - hand_size[0] // 2
-            hand_y = string_end_y + 25
-
-            cv2.putText(frame, hand_text, (hand_x, hand_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
 
     def _check_balloon_selection(self, hand_pos: Tuple[int, int], hand_label: str, current_time: float) -> Optional[int]:
         """Check if hand is touching a difficulty balloon."""
