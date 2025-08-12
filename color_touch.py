@@ -88,6 +88,10 @@ class ColorTouch:
         self.selection_deadline = 0  # when current selection expires
         self.show_deadline_warning = False
 
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SYSTEM SETUP & INITIALIZATION
+    # ═══════════════════════════════════════════════════════════════════════════════
+
     def _check_camera_permissions(self) -> None:
         """Check camera permissions on macOS."""
         import platform
@@ -123,6 +127,10 @@ class ColorTouch:
 
         # Set initial timer for instructions display
         self.init_start_time = time.time()
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # START SCREEN & DIFFICULTY SELECTION
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def _setup_difficulty_balloons(self, frame_width: int, frame_height: int) -> None:
         """Setup the difficulty selection balloons on start screen."""
@@ -257,6 +265,10 @@ class ColorTouch:
 
         return None
 
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # AUDIO & SOUND SYSTEM
+    # ═══════════════════════════════════════════════════════════════════════════════
+
     def _load_sounds(self) -> None:
         """Load sound files."""
         for sound_name, sound_file in CONFIG['sound_files'].items():
@@ -273,6 +285,10 @@ class ColorTouch:
                 self.sounds[sound_name].play()
             except Exception as e:
                 logger.warning(f"Failed to play sound {sound_name}: {e}")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # CAMERA SYSTEM & INITIALIZATION
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def _init_camera_with_retry(self) -> None:
         """Initialize camera with retry mechanism."""
@@ -348,6 +364,10 @@ class ColorTouch:
             logger.warning("No working cameras found!")
         else:
             logger.info(f"Total available cameras: {self.available_cameras}")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # GAME LOGIC & AREAS MANAGEMENT
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def _calculate_game_areas(self, frame_width: int, frame_height: int) -> None:
         """Calculate circular areas randomly positioned around the screen with max 60% overlap."""
@@ -520,6 +540,10 @@ class ColorTouch:
 
         logger.info(f"Area colors: {self.area_colors}")
         logger.info(f"Sequence colors needed: {sequence_colors}")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # VISUAL EFFECTS & DRAWING SYSTEM
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def _draw_border_flash(self, frame: np.ndarray, color_index: int, elapsed_time: float) -> None:
         """Draw flashing border with the current sequence color and highlight matching areas."""
@@ -719,6 +743,10 @@ class ColorTouch:
             cv2.putText(frame, number_text, (center_x - 10, center_y - radius + 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # HAND DETECTION & INTERACTION SYSTEM
+    # ═══════════════════════════════════════════════════════════════════════════════
+
     def _check_area_interaction(self, hand_pos: Tuple[int, int], hand_label: str) -> Optional[int]:
         """Check if hand position is touching any circular area and return area index."""
         x, y = hand_pos
@@ -795,6 +823,10 @@ class ColorTouch:
                     return current_area
 
         return None
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # UI NOTIFICATIONS & VISUAL FEEDBACK
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def _draw_error_notification(self, frame: np.ndarray) -> None:
         """Draw animated error notification overlay."""
@@ -1091,6 +1123,10 @@ class ColorTouch:
         cv2.putText(frame, success_text, (text_x, text_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
 
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # GAME FLOW & PROCESSING
+    # ═══════════════════════════════════════════════════════════════════════════════
+
     def _process_game_logic(self, current_time: float) -> None:
         """Process the main game logic based on current state."""
         if self.game_state == "INIT":
@@ -1167,6 +1203,10 @@ class ColorTouch:
                 self.score = 0
                 self.sequence_length = CONFIG['sequence_start_length']
                 self._start_new_game()
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # MAIN LOOP & CLEANUP
+    # ═══════════════════════════════════════════════════════════════════════════════
 
     def update_loop(self) -> None:
         """Process one frame of the video feed."""
