@@ -12,8 +12,7 @@ Um webapp interativo que combina memória visual e coordenação motora usando v
 
 ### Fase 2: Execução
 
-- A tela é dividida em **9 áreas iguais** (grade 3x3)
-- Cada área é colorida aleatoriamente
+- A tela tem circulos coloridos espalhados;
 - Indicações mostram qual **mão** (esquerda/direita) deve ser usada
 - O jogador deve tocar as áreas na sequência correta usando a mão indicada
 
@@ -105,7 +104,7 @@ multimedia-prog/
 
 1. **Inicialização**: Detecção e configuração da câmera
 2. **Sequência de Cores**: Exibição da sequência a ser memorizada
-3. **Grade Interativa**: Divisão da tela em 9 áreas coloridas
+3. **Tela Interativa**: Circulos coloridos sobre a tela randomicamente
 4. **Detecção de Gestos**: Rastreamento das mãos do jogador
 5. **Validação**: Verificação da sequência executada
 6. **Progressão**: Aumento da dificuldade com sequências mais longas
@@ -133,7 +132,7 @@ Se encontrar problemas com a câmera, consulte o arquivo `TROUBLESHOOTING.md` qu
 
 Contribuições são bem-vindas! Este projeto está em desenvolvimento ativo. Áreas que precisam de desenvolvimento:
 
-- **Interface do Jogo**: Implementação da grade 3x3 interativa
+- **Interface do Jogo**: Implementação da randomização dos circulos na tela
 - **Sistema de Pontuação**: Tracking de scores e níveis
 - **Efeitos Visuais**: Melhor feedback visual para interações
 - **Sistema de Cores**: Otimização da sequência de cores
@@ -145,14 +144,6 @@ Sinta-se à vontade para abrir issues e enviar pull requests!
 
 Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
-## 🎯 Roadmap
 
-- [x] ✅ Sistema básico de detecção de mãos
-- [x] ✅ Configuração robusta de câmera
-- [ ] 🚧 Implementação da grade de jogo 3x3
-- [ ] 🚧 Sistema de sequências de cores
-- [ ] 🚧 Lógica de validação de gestos
-- [ ] 🚧 Sistema de pontuação e progressão
-- [ ] 🚧 Interface gráfica melhorada
 - [ ] 🚧 Efeitos sonoros e visuais
 - [ ] 🚧 Sistema de configurações avançadas
