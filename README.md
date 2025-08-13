@@ -143,7 +143,3 @@ Sinta-se à vontade para abrir issues e enviar pull requests!
 ## 📄 Licença
 
 Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
-
-
-- [ ] 🚧 Efeitos sonoros e visuais
-- [ ] 🚧 Sistema de configurações avançadas
